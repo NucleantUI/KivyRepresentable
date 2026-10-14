@@ -1,0 +1,9 @@
+build/
+dist/
+*.egg-info/
+src/android/config.h
+src/android/config.pxi
+src/android/config.py
+src/android/_android.c
+src/android/_android_billing.c
+src/android/_android_sound.c

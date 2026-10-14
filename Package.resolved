@@ -1,0 +1,42 @@
+{
+  "originHash" : "e7d87cc730e45da5d55e1a0942e0f49171a19bf3611df071a2adf62688885236",
+  "pins" : [
+    {
+      "identity" : "pyswiftast",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Py-Swift/PySwiftAST.git",
+      "state" : {
+        "branch" : "master",
+        "revision" : "c757b0d9e7975b59d3c670fea8a99b043e2cb4ba"
+      }
+    },
+    {
+      "identity" : "spirvcore",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/NucleantUI/SpirvCore.git",
+      "state" : {
+        "branch" : "master",
+        "revision" : "6208013087083579bb534cb0cd6ce1b581947233"
+      }
+    },
+    {
+      "identity" : "sulphurgeometry",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/NucleantUI/SulphurGeometry",
+      "state" : {
+        "branch" : "main",
+        "revision" : "c7b860882780954745cdb22a358c9f74c4261abf"
+      }
+    },
+    {
+      "identity" : "swift-syntax",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
+      "state" : {
+        "revision" : "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
+        "version" : "603.0.2"
+      }
+    }
+  ],
+  "version" : 3
+}

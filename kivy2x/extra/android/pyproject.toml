@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel", "Cython>=0.29,<3.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "android"
+version = "0.0.1"
+description = "Android platform services for Kivy"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+dependencies = [
+    "pyjnius ; sys_platform == 'android'",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ---------------------------------------------------------------------------
+# cibuildwheel
+# ---------------------------------------------------------------------------
+[tool.cibuildwheel]
+build = "cp3*-*"
+
+[tool.cibuildwheel.android]
+archs = ["arm64_v8a", "x86_64"]
+
+# BOOTSTRAP      – sdl2 | sdl3 (controls which SDL libs are linked + config.pxi)
+# KIVY_VERSION   – kivy android wheel to harvest libSDL2/3.so from
+# ANDROID_API    – minimum API level; must match the kivy wheel platform tag
+# setup.py reads these and handles config generation + SDL lib harvesting itself.
+[tool.cibuildwheel.android.environment]
+BOOTSTRAP = "sdl2"
+KIVY_VERSION = "2.3.1"
+ANDROID_API = "24"
+PIP_EXTRA_INDEX_URL = "https://pypi.anaconda.org/kivyschool/simple"

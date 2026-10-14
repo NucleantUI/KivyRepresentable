@@ -1,0 +1,43 @@
+name: Android Wheels
+
+on:
+  push:
+    branches:
+      - upgrade
+  pull_request:
+
+jobs:
+  build-android:
+    name: Build Android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13.8'
+
+      - name: install cibuildwheel
+        run: pip install cibuildwheel
+
+      - name: setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28c
+
+      - name: build wheels
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cibuildwheel --platform android --archs all --output-dir wheelhouse
+
+      - run: ls wheelhouse
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kivy2x-android-wheels
+          path: wheelhouse/
+          retention-days: 1
