@@ -65,6 +65,10 @@ public final class KivyRenderNode: NucleantContainerNode, @unchecked Sendable {
         case .renderTexture(let node): node.update(engine, slot: self, cmd: cmd)
         case .kivy(let node): node.update(engine, slot: self, cmd: cmd)
         }
+        // Kivy runs on its own clock, ticked from the engine's frame
+        // (`onUpdate`), so its slot never idles: clearing it would stop the
+        // frames that tick Kivy.
+        if case .kivy = context { return }
         needsRender = false
     }
 

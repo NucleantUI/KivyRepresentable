@@ -1,2 +1,23 @@
 .build/
 .swiftpm/
+
+# Cython output kivy2x's own .gitignore misses (hand-written C, like
+# window_x11_*.c and libtess2, stays tracked).
+kivy2x/kivy/core/window/_window_nui.c
+kivy2x/kivy/graphics/ngl_backend/*.c
+kivy2x/kivy/graphics/egl_backend/*.c
+kivy2x/kivy/lang/*.c
+kivy2x/kivy/uix/*.c
+kivy2x/kivy/uix/recycleview/*.c
+
+# Built wheels (uv build --out-dir wheelhouse).
+kivy2x/wheelhouse/
+
+# Installed by playground/build.sh.
+playground/swift/Sources/PlaygroundApp/site_packages/
+playground/swift/.build/
+
+.DS_Store
+# Built by playground/build.sh kivy (local rpath, machine-specific).
+playground/wheelhouse/*.whl
+__pycache__/

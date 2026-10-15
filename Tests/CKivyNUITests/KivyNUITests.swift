@@ -6,6 +6,7 @@ final class HostLog {
     var presents = 0
     var titles: [String] = []
     var closes = 0
+    var liveContexts = 0
 }
 
 /// What Kivy's tick saw.
@@ -31,6 +32,33 @@ struct KivyNUITests {
         var metrics = KivyNUIWindowMetrics(width: 9, height: 9, pixel_width: 9, pixel_height: 9, density: 9, dpi: 9)
         kivy_nui_get_window_metrics(&metrics)
         #expect(metrics.width == 0 && metrics.pixel_height == 0)
+    }
+
+    @Test func glContextRequestsReachTheHost() {
+        kivy_nui_set_host(nil)
+        // No host, no context: Kivy's window has to fail, not draw nowhere.
+        #expect(!kivy_nui_create_gl_context())
+        kivy_nui_destroy_gl_context()
+
+        let log = HostLog()
+        let context = Unmanaged.passRetained(log)
+        defer { context.release() }
+        var host = KivyNUIHost()
+        host.context = context.toOpaque()
+        host.create_gl_context = { context in
+            Unmanaged<HostLog>.fromOpaque(context!).takeUnretainedValue().liveContexts += 1
+            return true
+        }
+        host.destroy_gl_context = { context in
+            Unmanaged<HostLog>.fromOpaque(context!).takeUnretainedValue().liveContexts -= 1
+        }
+        kivy_nui_set_host(&host)
+        defer { kivy_nui_set_host(nil) }
+
+        #expect(kivy_nui_create_gl_context())
+        #expect(log.liveContexts == 1)
+        kivy_nui_destroy_gl_context()
+        #expect(log.liveContexts == 0)
     }
 
     @Test func hostCallsAreForwardedWithContext() {

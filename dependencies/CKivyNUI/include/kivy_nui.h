@@ -17,8 +17,10 @@
  * Order of events:
  *   1. The host registers itself (`kivy_nui_set_host`), then starts Python.
  *   2. Kivy picks the `nui` window / cgl backend (`kivy_nui_is_hosted`),
- *      copies the host's GLES2 table (`kivy_nui_gl`, kivy_nui_gl.h) into its
- *      own, and registers its tick (`kivy_nui_set_kivy`).
+ *      asks for a GL context (`kivy_nui_create_gl_context`, from
+ *      ngl_nui.pyx — what EGL is to ANGLE), copies the host's GLES2 table
+ *      (`kivy_nui_gl`, kivy_nui_gl.h) into its own, and registers its tick
+ *      (`kivy_nui_set_kivy`).
  *   3. Every display-sync frame the host calls `kivy_nui_tick`; Kivy drains
  *      `kivy_nui_poll_event`, runs its clock and draws, then calls
  *      `kivy_nui_present`.
@@ -181,6 +183,11 @@ typedef struct KivyNUIHost {
        the shader node draws (framebuffer 0); see kivy_nui_gl.h. Must stay
        valid while the host is registered. */
     const KivyNUIGL *gl;
+    /* Kivy's window wants a GL context (ngl_nui.pyx `create_context`), or
+       is done with it. The host sets up its GL then, framebuffer 0 at the
+       window's pixel size, and drops it on destroy. False when it can't. */
+    bool (*create_gl_context)(void *context);
+    void (*destroy_gl_context)(void *context);
     /* Kivy finished a frame into framebuffer 0 (Window.flip). */
     void (*present)(void *context);
 
@@ -223,6 +230,9 @@ KIVY_NUI_API void kivy_nui_set_kivy(const KivyNUIKivy *kivy);
 /* The host's GLES2 table, for `cgl_nui.pyx` to copy into Kivy's
    `GLES2_Context`. NULL when no host is registered. */
 KIVY_NUI_API const KivyNUIGL *kivy_nui_gl(void);
+/* False when no host is registered or it couldn't make one. */
+KIVY_NUI_API bool kivy_nui_create_gl_context(void);
+KIVY_NUI_API void kivy_nui_destroy_gl_context(void);
 KIVY_NUI_API void kivy_nui_present(void);
 
 KIVY_NUI_API void kivy_nui_get_window_metrics(KivyNUIWindowMetrics *out);

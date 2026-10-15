@@ -43,6 +43,14 @@ const KivyNUIGL *kivy_nui_gl(void) {
     return g_has_host ? g_host.gl : NULL;
 }
 
+bool kivy_nui_create_gl_context(void) {
+    return g_host.create_gl_context ? g_host.create_gl_context(g_host.context) : false;
+}
+
+void kivy_nui_destroy_gl_context(void) {
+    if (g_host.destroy_gl_context) g_host.destroy_gl_context(g_host.context);
+}
+
 void kivy_nui_present(void) {
     if (g_host.present) g_host.present(g_host.context);
 }

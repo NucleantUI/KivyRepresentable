@@ -243,6 +243,8 @@ cdef extern from "kivy_nui.h" nogil:
     void kivy_nui_set_kivy(const KivyNUIKivy *kivy)
 
     const KivyNUIGL *kivy_nui_gl()
+    bint kivy_nui_create_gl_context()
+    void kivy_nui_destroy_gl_context()
     void kivy_nui_present()
 
     void kivy_nui_get_window_metrics(KivyNUIWindowMetrics *out)

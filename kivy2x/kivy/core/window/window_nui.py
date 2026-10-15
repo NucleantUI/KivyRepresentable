@@ -233,6 +233,9 @@ class WindowNUI(WindowBase):
             self.system_size = (w, h)
             self._update_density_and_dpi()
             self._pos = (0, 0)
+            # Before Kivy's first GL call, as WindowSDL makes its EGL
+            # context in setup_window.
+            self._win.create_gl_context(self.get_gl_backend_name())
 
         super(WindowNUI, self).create_window()
         self._set_cursor_state(self.show_cursor)
@@ -293,6 +296,7 @@ class WindowNUI(WindowBase):
     def close(self):
         self._win.set_tick(None)
         super(WindowNUI, self).close()
+        self._win.destroy_gl_context()
         self.initialized = False
         self._win.request_close()
 

@@ -86,9 +86,118 @@ Running notes for the KivyRepresentable experiment. See `plan.md` for the goal,
 - Window commands from Kivy so far: title, system cursor (Kivy's 12 names),
   cursor visibility, show/hide keyboard, request close. Clipboard is its own
   provider, not here yet.
-- Status: headers + `kivy_nui.c` (tables, forwarding, event queue)
-  written; `Tests/CKivyNUITests` covers them (`swift test --filter
-  KivyNUITests`). The GL table itself is not implemented yet.
+- GL context: Kivy's window asks the host for one before its first GL
+  call (`kivy_nui_create_gl_context`) and drops it on close
+  (`kivy_nui_destroy_gl_context`) — EGL's role for ANGLE. The host makes
+  its GL then, framebuffer 0 at the window's pixel size.
+- Status: headers + `kivy_nui.c` (tables, forwarding, event queue);
+  `Tests/CKivyNUITests` covers them (`swift test --filter KivyNUITests`).
+
+## GLES2 on Vulkan — `Sources/KivyRepresentable/GL/`
+
+What ANGLE is to Kivy on Metal. `KivyGL.table` is the `KivyNUIGL` the host
+registers; every member forwards to `KivyGL.current` (Kivy has one context).
+
+- Recording: one command buffer per Kivy frame, begun by the first call that
+  needs the GPU, submitted and waited for at `present` (or glReadPixels /
+  glFinish). Render passes open lazily on the bound framebuffer and close
+  when it changes or a transfer is needed; barriers come from each image's
+  tracked layout.
+- Buffers live on the CPU; each draw copies what it uses into a per-frame
+  streaming buffer (cached per buffer version), so a draw sees the data as
+  it was when issued, GL's rule.
+- Every color image is RGBA8; RGB, BGRA, luminance, alpha etc. are
+  converted on upload. Depth/stencil renderbuffers are one combined format
+  (D24S8 or D32S8, whichever the device attaches).
+- Shaders (`GLSLTranslator.swift`): GLSL ES 1.00 → Vulkan GLSL 450, then
+  shaderc (NucleantShader). attribute/varying get locations (varyings by
+  name, shared by both stages), samplers get bindings, plain uniforms go into
+  one std140 block laid out the same in both stages; glUniform* writes its
+  bytes. The vertex `main` is wrapped to map GL's clip z (-w..w) to Vulkan's
+  (0..w).
+- No y flip anywhere inside: GL's window row 0 and Vulkan's framebuffer row
+  0 are both the first row in memory, so rendering is in GL's memory order
+  (what Fbo textures and glReadPixels expect). `present` blits framebuffer 0
+  into the shader node's image flipped, for the composite. Front face is
+  inverted (Vulkan's signed-area formula has the opposite sign).
+- GL_TRIANGLE_FAN / GL_LINE_LOOP (Kivy's Mesh, Line) become triangle lists /
+  line strips with generated indices: MoltenVK has no fans, Vulkan no loops.
+  16-bit indices stay below 0xFFFF: Metal always restarts strips there.
+- Caches are keyed by serial numbers, never object addresses: a VBO Kivy
+  deletes and recreates can land at the same address.
+- Not done (left nil in the table): compressed textures, glCopyTex*,
+  glShaderBinary; cube maps; client-side vertex/index arrays (Kivy always
+  uses buffers).
+
+## Host — `KivyHost`, `KivyNUILibrary`
+
+- `KivyHost` registers the host table, makes `KivyGL` when Kivy asks,
+  presents, forwards ticks/events, resizes framebuffer 0.
+- It calls the C api through `KivyNUILibrary` — `dlopen` of the shared
+  `libCKivyNUI` — never the copy compiled into this module: Kivy's
+  extensions link the dylib, and a host registered with a different copy is
+  one Kivy never sees.
+- `libKivyNUIHeadless` (product `KivyNUIHeadless`): a windowless host on its
+  own Vulkan device, for a process that already runs Python;
+  `kivy_nui_headless_start/read/stop`.
+
+## In an app — `KivyApp`, `KivyWindowGroup`, `KivyPython`
+
+    @main
+    struct MyApp: KivyApp {
+        var body: some Scene {
+            KivyWindowGroup("Kivy", python: .init(module: "myapp", sitePackages: [...]))
+        }
+    }
+
+- `KivyWindowGroup` makes an ordinary `HostingWindow<KivyRenderNode>`; its
+  root `KivyView` draws nothing, forwards press/drag/release as SDL mouse
+  events (`DragGesture(minimumDistance: 0)`) and, on appear, starts the
+  session: adds a `.kivy` slot to the window's engine (public
+  `renderEngine`), starts Python, imports `kivy.graphics.ngl_backend.ngl_nui`
+  (which loads the libCKivyNUI Kivy links), registers the host with *that*
+  library (`KivyNUILibrary.loadedByKivy()`), then runs the module with
+  `runpy` as `__main__`. `App.run()` returns; the GIL is released.
+- Ticking: the engine's `onUpdate` (start of every `drawFrame`) ticks Kivy,
+  which presents into the slot before the frame composites it. The `.kivy`
+  slot keeps `needsRender` set, so the engine draws every display frame.
+- Resize: each frame compares `win_rect` (pixels); on a change the slot's
+  image is replaced (`invalidateComposite`, old one freed after in-flight
+  frames), framebuffer 0 resized, Kivy told WINDOW_RESIZED. Points come from
+  `@Environment(\.displayScale)`.
+- `KivyPython`: PythonLauncher's isolated init — home = the prefix of the
+  linked Python (found through `dladdr`, LoadedLibraries+Apple.swift),
+  stdlib + lib-dynload on the path, `site_import = 0` (python.org's own
+  site-packages can hold another Kivy), then `site.addsitedir` per
+  `sitePackages`. Sets `KIVY_WINDOW=nui`, `KIVY_GL_BACKEND=nui`,
+  `KIVY_NO_ARGS=1` unless given.
+- Python comes from PySwiftKit's CPython package (local checkouts in
+  Package.swift), normal mode: python.org's Python.framework 3.13. What
+  links it needs `-F/Library/Frameworks` (tests, headless lib, the app).
+- Not yet: pointer motion without a button (NucleantUI views only see the
+  pointer during a drag — Kivy's hover needs plain motion events), scroll,
+  keyboard, window title from Kivy (`HostingWindow.title` is internal).
+
+## Playground — `playground/`
+
+`./build.sh kivy` (or `./build.sh` with the wheel already in
+`playground/wheelhouse`): builds libCKivyNUI, the nui Kivy wheel (uv,
+Python 3.13) into `wheelhouse`, `uv pip install --target
+swift/Sources/PlaygroundApp/site_packages .` (the playground package, Kivy,
+Pillow), and the Swift app, which bundles `site_packages` as a resource.
+Run `swift/.build/debug/PlaygroundApp` (the `playground` module) or
+`swift/.build/debug/PlaygroundApp showcase`.
+
+`src/showcase` (shipped in the same distribution, `module-name` list in
+pyproject.toml): ScreenManager with slide, fade and wipe transitions (Kivy's
+shader transitions: Fbos + custom GLSL with two samplers), a home grid of
+cards (BoxShadow, RoundedRectangle), clock-driven canvas drawing
+(transforms, fan Mesh, Bezier, pies, wide lines, a stencil clip),
+`schedule_interval` / `schedule_once` / chained Animations / ProgressBar,
+widgets (Slider, Switch, ToggleButton, CheckBox, Spinner, a 60-row
+ScrollView), and a plasma fragment shader of its own.
+`SHOWCASE_TOUR=<seconds>` walks the screens. `test_render_nui.py` runs it
+headless too.
 
 ## Kivy side (in `kivy2x`)
 
@@ -96,6 +205,10 @@ New files:
 - `kivy/lib/kivy_nui.pxi`: Cython declarations of `kivy_nui.h`, included like
   `lib/sdl2.pxi`. `KivyNUIGL` members are declared `void *`; cgl_nui casts
   each to Kivy's own pointer type.
+- `kivy/graphics/ngl_backend/ngl_nui.pyx`: `NGLNUI`, the GL context —
+  `create_context` / `swap_buffers` / `destroy_context`, as `EGLANGLE` in
+  `egl_backend/`. `_window_nui.pyx` makes it before Kivy's first GL call
+  (skipped for the `mock` backend) and swaps through it on flip.
 - `kivy/graphics/cgl_backend/cgl_nui.pyx`: made from `cgl_angle.pyx`, each
   `eglGetProcAddress("glX")` → `gl.glX` from `kivy_nui_gl()`.
 - `kivy/core/window/_window_nui.pyx`: `_WindowNUIStorage`; `poll()` returns
@@ -115,6 +228,10 @@ Changed in Kivy (originals of replaced functions kept under a `_` name):
   `ticked_by_host`; original is `_runTouchApp`.
 - `kivy/app.py`: `App.run` returns without `_stop()` in that case; original
   is `App._run`.
+- `kivy/lang/builder.pyx`: `_new_ids` typed `object` instead of `dict`.
+  `root.ids` is an `ObservableDict`, a dict subclass, and the Cython 3 build
+  rejects it ("Expected dict, got ObservableDict") as soon as a kv file
+  uses `ids`. A bug in kivy2x itself, not nui-specific.
 - One-word additions: `'nui'` in `kivy_options['window']`
   (`kivy/__init__.py`), the recognized backends in `cgl_init`
   (`graphics/cgl.pyx`), and `('nui', 'window_nui', 'WindowNUI')` first in
@@ -124,21 +241,39 @@ Changed in Kivy (originals of replaced functions kept under a `_` name):
   `dependencies/CKivyNUI/include` and `.build/debug`), and the two
   extensions. cgl_nui uses `gl_flags_base`: no system GL is linked.
 
-Build: `swift build --target CKivyNUI`, then in `kivy2x`, with a Python
-that has **Cython 3.0.11** (Kivy pins `<=3.0.11`; 3.2 fails on `long` in
-Kivy's own .pyx files):
-`ARCHFLAGS="-arch x86_64" USE_NUI=1 USE_SDL2=0 USE_GSTREAMER=0
-USE_PANGOFT2=0 python setup.py build_ext --inplace`.
-`ARCHFLAGS` must match the dylib's arch (this Mac: x86_64); the python.org
-Python is universal2 and would otherwise also build arm64, which can't link
-an x86_64-only libCKivyNUI.
+Build (Python 3.13, uv):
 
-Test: `python Tests/kivy/test_window_nui.py` (same Python as the build;
-needs Pillow for the PIL text provider). It plays the host through ctypes:
-an App runs from `kivy_nui_tick`, a click reaches a Button, quit stops the
-App and calls `request_close`; and with `KIVY_GL_BACKEND=nui`, Kivy's
-`glGetString` / `glClearColor` land in the host's table. The window test
-uses Kivy's `mock` GL, since the Vulkan GL table doesn't exist yet.
+    swift build --product CKivyNUI
+    cd kivy2x
+    USE_NUI=1 USE_SDL2=0 USE_GSTREAMER=0 USE_PANGOFT2=0 \
+        uv build --wheel --python 3.13 --out-dir wheelhouse
+
+- `USE_NUI=1` builds `cgl_nui`, `ngl_nui` and `_window_nui` against
+  `dependencies/CKivyNUI/include` and `.build/debug/libCKivyNUI.dylib`
+  (`KIVY_NUI_INCLUDE_DIR` / `KIVY_NUI_LIB_DIR` override). `USE_SDL2=0` etc.:
+  nothing of SDL, GStreamer or Pango is needed.
+- uv's build env installs Kivy's pinned build deps (Cython <=3.0.11; 3.2
+  fails on `long` in Kivy's own .pyx files). uv's own CPython 3.13 is
+  x86_64 on this Mac, matching the dylib; no ARCHFLAGS needed.
+- The modules link `@rpath/libCKivyNUI.dylib` with the rpath pointing at
+  this checkout's `.build/debug`: the wheel works on this machine only, for
+  now. Bundling the dylib (cibuildwheel/delocate) is for later — the host
+  then has to `dlopen` that copy (`KivyNUILibrary.load(path:)`).
+
+Tests (Python 3.13 with Pillow for the PIL text provider; against the
+kivy2x checkout, or with `KIVY_NUI_INSTALLED=1` against the Kivy installed in
+that Python, e.g. the wheel in a `uv venv`):
+- `python Tests/kivy/test_window_nui.py`: plays the host through ctypes: an
+  App runs from `kivy_nui_tick`, a click reaches a Button, quit stops the
+  App and calls `request_close`; Kivy's GL calls land in the host's table.
+  Uses Kivy's `mock` GL.
+- `python Tests/kivy/test_render_nui.py`: real Kivy apps (canvas shapes,
+  Label/Button text, StencilView, Fbo) on the Vulkan GL through
+  `libKivyNUIHeadless`; frames read back and checked, saved as PNGs
+  (`KIVY_NUI_SHOTS`). Needs `swift build --product CKivyNUI` and
+  `--product KivyNUIHeadless` first.
+- `swift test`: the GL on its own (`KivyGLTests`, through the C table on a
+  headless device), the C api, `KivyApp`.
 
 Run (set by the host before starting Python): `KIVY_WINDOW=nui`,
 `KIVY_GL_BACKEND=nui`.
@@ -186,3 +321,9 @@ selected:
   `window_nui.py`; clock/runTouchApp/App.run replaced (originals kept as
   `_idle` / `_runTouchApp` / `_run`); setup.py `USE_NUI`. `kivy_nui.c`
   implemented with tests.
+- 2026-10-15: GLES2 on Vulkan (`Sources/KivyRepresentable/GL/`), GL
+  context in the C api + `ngl_backend/ngl_nui.pyx`, `KivyHost`,
+  `libKivyNUIHeadless`. Real Kivy renders through it headless.
+- 2026-10-15: PySwiftKit (local), `KivyPython`, `KivyWindowGroup`; the
+  playground app runs a kv app from a uv-installed site_packages inside a
+  NucleantUI window. Fixed kivy2x's builder.pyx `ids` typing bug.

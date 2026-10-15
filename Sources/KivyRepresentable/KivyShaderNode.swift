@@ -61,3 +61,37 @@ public final class KivyShaderNode<ContainerNode: RenderContainerNode>: VulkanRen
         }
     }
 }
+
+extension KivyShaderNode {
+    /// A node with an image of its own, `width` x `height` pixels: what
+    /// Kivy's frames are copied into (`KivyGL.present`).
+    public static func make(device: KivyGLDevice, width: Int, height: Int) throws -> KivyShaderNode {
+        let image = try Self.makeImage(device: device, width: width, height: height)
+        return KivyShaderNode(
+            width: UInt32(image.width), height: UInt32(image.height),
+            image: image.image, imageView: image.view, memory: image.memory
+        )
+    }
+
+    /// Swap in an image at the new size. The old one is handed back to be
+    /// freed once no frame in flight samples it.
+    public func resize(device: KivyGLDevice, width: Int, height: Int) throws -> (image: VkImage, view: VkImageView, memory: VkDeviceMemory?) {
+        let replacement = try Self.makeImage(device: device, width: width, height: height)
+        let old = (image, imageView, memory)
+        image = replacement.image
+        imageView = replacement.view
+        memory = replacement.memory
+        self.width = UInt32(width)
+        self.height = UInt32(height)
+        hasContent = false
+        return old
+    }
+
+    private static func makeImage(device: KivyGLDevice, width: Int, height: Int) throws -> GLImage {
+        try GLImage(
+            device: device, width: max(1, width), height: max(1, height), format: KivyGL.colorFormat,
+            usage: VkImageUsageFlags(VK_IMAGE_USAGE_SAMPLED_BIT.rawValue | VK_IMAGE_USAGE_TRANSFER_DST_BIT.rawValue),
+            aspect: VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT.rawValue)
+        )
+    }
+}

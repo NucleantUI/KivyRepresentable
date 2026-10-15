@@ -1300,6 +1300,7 @@ if c_options['use_nui']:
     # from.
     sources['graphics/cgl_backend/cgl_nui.pyx'] = merge(
         base_flags, gl_flags_base, nui_flags)
+    sources['graphics/ngl_backend/ngl_nui.pyx'] = merge(base_flags, nui_flags)
     sources['core/window/_window_nui.pyx'] = merge(base_flags, nui_flags)
 
 if c_options["use_sdl2"]:

@@ -562,7 +562,7 @@ class BuilderBase(object):
         cdef dict rctx
         cdef dict _ids
         cdef object _root
-        cdef dict _new_ids
+        cdef object _new_ids  # root.ids is an ObservableDict (a dict subclass), which `dict` rejects
         cdef str _key
         cdef object _value
         cdef list crule_children

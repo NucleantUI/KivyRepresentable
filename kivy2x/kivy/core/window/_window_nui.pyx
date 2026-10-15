@@ -11,6 +11,7 @@ display-sync frame.
 
 include "../../lib/kivy_nui.pxi"
 
+from kivy.graphics.ngl_backend.ngl_nui cimport NGLNUI
 import traceback
 
 # The Python callable the host's ticks reach (WindowNUI._tick), or None.
@@ -50,6 +51,22 @@ def is_hosted():
 
 cdef class _WindowNUIStorage:
 
+    # The GL context (ngl_backend), as `_WindowSDLStorage` keeps its
+    # EGLANGLE. None with the `mock` backend, which draws nowhere.
+    cdef NGLNUI ngl
+
+    def create_gl_context(self, gl_backend_name):
+        if gl_backend_name == 'mock' or self.ngl is not None:
+            return
+        ngl = NGLNUI()
+        ngl.create_context()
+        self.ngl = ngl
+
+    def destroy_gl_context(self):
+        if self.ngl is not None:
+            self.ngl.destroy_context()
+            self.ngl = None
+
     def set_tick(self, callback):
         '''Start (callback) or stop (None) receiving the host's ticks.'''
         global _tick_callback
@@ -81,7 +98,10 @@ cdef class _WindowNUIStorage:
         return m.pixel_width, m.pixel_height
 
     def flip(self):
-        kivy_nui_present()
+        if self.ngl is not None:
+            self.ngl.swap_buffers()
+        else:
+            kivy_nui_present()
 
     def set_window_title(self, title):
         kivy_nui_set_title(title.encode('utf-8'))

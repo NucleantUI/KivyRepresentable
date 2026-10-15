@@ -1,0 +1,30 @@
+[project]
+name = "playground"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "psychowasp", email = "psychowaspx@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    # Built with the nui backends (kivy2x, USE_NUI=1), from ./wheelhouse.
+    "kivy==2.3.1",
+    # Kivy's text provider without SDL.
+    "pillow",
+]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+find-links = ["./wheelhouse"]
+
+[tool.uv.pip]
+find-links = ["./wheelhouse"]
+
+[tool.uv.build-backend]
+# Both apps ship in the one distribution.
+module-name = ["playground", "showcase"]
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"

@@ -18,14 +18,17 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-KIVY = os.path.join(ROOT, 'kivy2x')
+# KIVY_NUI_INSTALLED=1: test the Kivy installed in this Python (the wheel)
+# instead of the kivy2x checkout.
+KIVY = None if os.environ.get('KIVY_NUI_INSTALLED') else os.path.join(ROOT, 'kivy2x')
 LIB = os.path.join(ROOT, '.build', 'debug', 'libCKivyNUI.dylib')
 
 
 # The host side, shared by both child processes.
 HOST = r'''
 import ctypes, os, sys
-sys.path.insert(0, KIVY)
+if KIVY:
+    sys.path.insert(0, KIVY)
 lib = ctypes.CDLL(LIB)
 
 class Metrics(ctypes.Structure):
@@ -38,9 +41,11 @@ METRICSFN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.POINTER(Metrics))
 TITLEFN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_char_p)
 INTFN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_int)
 BOOLFN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_bool)
+CONTEXTFN = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p)
 
 class Host(ctypes.Structure):
     _fields_ = [('context', ctypes.c_void_p), ('gl', ctypes.c_void_p),
+                ('create_gl_context', CONTEXTFN), ('destroy_gl_context', VOIDFN),
                 ('present', VOIDFN), ('get_window_metrics', METRICSFN),
                 ('set_title', TITLEFN), ('set_system_cursor', INTFN),
                 ('set_cursor_visible', BOOLFN), ('show_keyboard', VOIDFN),
@@ -68,7 +73,8 @@ def _title(ctx, utf8): seen['titles'].append(utf8.decode())
 def _close(ctx): seen['closes'] += 1
 def _noop(ctx, *a): pass
 
-callbacks = [VOIDFN(_present), METRICSFN(_metrics), TITLEFN(_title),
+# Only the mock GL is used here, which never asks for a context.
+callbacks = [CONTEXTFN(lambda ctx: False), VOIDFN(_noop), VOIDFN(_present), METRICSFN(_metrics), TITLEFN(_title),
              INTFN(_noop), BOOLFN(_noop), VOIDFN(_noop), VOIDFN(_noop),
              VOIDFN(_close)]
 host = Host(None, GL_TABLE, *callbacks)
