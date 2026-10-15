@@ -137,7 +137,8 @@ struct GLSLShaderSource {
         let range: Range<String.Index>
     }
 
-    /// The source with comments blanked and any `#version` line removed.
+    /// The source with comments blanked and any `#version` line removed, as
+    /// well as `#extension` lines for what Vulkan GLSL has built in.
     let text: String
     let declarations: [Declaration]
 
@@ -159,7 +160,7 @@ struct GLSLShaderSource {
     }
 
     init(_ source: String) throws {
-        let text = Self.removingVersion(Self.blankingComments(source))
+        let text = Self.removingDirectives(Self.blankingComments(source))
         var declarations: [Declaration] = []
         var depth = 0
         var statementStart = text.startIndex
@@ -271,9 +272,17 @@ struct GLSLShaderSource {
         return out
     }
 
-    private static func removingVersion(_ source: String) -> String {
+    /// GLSL ES 1.00 extensions that are core in GLSL 450.
+    static let builtInExtensions = ["GL_OES_standard_derivatives"]
+
+    private static func removingDirectives(_ source: String) -> String {
         source.split(separator: "\n", omittingEmptySubsequences: false).map { line in
-            line.trimmingCharacters(in: .whitespaces).hasPrefix("#version") ? "" : String(line)
+            let directive = line.trimmingCharacters(in: .whitespaces)
+            if directive.hasPrefix("#version") { return "" }
+            if directive.hasPrefix("#extension"), builtInExtensions.contains(where: { directive.contains($0) }) {
+                return ""
+            }
+            return String(line)
         }.joined(separator: "\n")
     }
 }

@@ -58,6 +58,7 @@ __all__ = ('Triangle', 'Quad', 'Rectangle', 'RoundedRectangle', 'BorderImage', '
 include "../include/config.pxi"
 include "common.pxi"
 include "memory.pxi"
+include "opcodes.pxi"
 
 from os import environ
 from kivy.graphics.vbo cimport *
@@ -66,6 +67,7 @@ from kivy.graphics.instructions cimport *
 from kivy.graphics.cgl cimport *
 from kivy.logger import Logger
 from kivy.graphics.texture cimport Texture
+from kivy.graphics.shader cimport Shader
 from kivy.utils import platform
 
 cdef int gles_limts = int(environ.get(
@@ -1129,6 +1131,70 @@ cdef class BorderImage(Rectangle):
         self._display_border = list(b)
         self.flag_data_update()
 
+# Ellipse's own shader: the fill is a quad, and each fragment's coverage is
+# its distance from the edge, in pixels (screen-space derivatives), so the
+# edge is exact and antialiased at any size. Arcs cut it with two half-planes
+# through the center. Fragments with no coverage are discarded, so an Ellipse
+# as a stencil mask still masks round.
+ELLIPSE_VS = '''
+$HEADER$
+varying vec2 ellipse_pos;
+void main (void) {
+    frag_color = color * vec4(1.0, 1.0, 1.0, opacity);
+    tex_coord0 = vTexCoords0;
+    ellipse_pos = vPosition;
+    gl_Position = projection_mat * modelview_mat * vec4(vPosition.xy, 0.0, 1.0);
+}
+'''
+
+ELLIPSE_FS = '''
+#extension GL_OES_standard_derivatives : enable
+$HEADER$
+varying vec2 ellipse_pos;
+/* x, y, width, height */
+uniform vec4 ellipse_rect;
+/* first angle, span (radians, clockwise from the top), 1 for an arc */
+uniform vec3 ellipse_arc;
+
+/* f in pixels: f over its screen-space gradient. */
+float pixels(float f) {
+    return f / max(length(vec2(dFdx(f), dFdy(f))), 1e-6);
+}
+
+void main (void) {
+    vec2 r = ellipse_rect.zw * 0.5;
+    vec2 p = ellipse_pos - (ellipse_rect.xy + r);
+    float d = pixels(length(p / r) - 1.0);
+
+    /* The arc's two edges, from the center to where Kivy's angles land
+       on the ellipse; inside is clockwise from the first to the second. */
+    float a1 = ellipse_arc.x;
+    float a2 = ellipse_arc.x + ellipse_arc.y;
+    vec2 e1 = vec2(r.x * sin(a1), r.y * cos(a1));
+    vec2 e2 = vec2(r.x * sin(a2), r.y * cos(a2));
+    float d1 = pixels(e1.x * p.y - e1.y * p.x);
+    float d2 = pixels(e2.y * p.x - e2.x * p.y);
+    float wedge = ellipse_arc.y <= 3.14159265 ? max(d1, d2) : min(d1, d2);
+    if (ellipse_arc.z > 0.5)
+        d = max(d, wedge);
+
+    float coverage = clamp(0.5 - d, 0.0, 1.0);
+    if (coverage <= 0.0)
+        discard;
+    vec4 c = frag_color * texture2D(texture0, tex_coord0);
+    gl_FragColor = vec4(c.rgb, c.a * coverage);
+}
+'''
+
+cdef Shader ellipse_shader = None
+
+cdef Shader get_ellipse_shader():
+    global ellipse_shader
+    if ellipse_shader is None:
+        ellipse_shader = Shader(vs=ELLIPSE_VS, fs=ELLIPSE_FS)
+    return ellipse_shader
+
+
 cdef class Ellipse(Rectangle):
     '''A 2D ellipse.
 
@@ -1153,6 +1219,11 @@ cdef class Ellipse(Rectangle):
     cdef int _segments
     cdef float _angle_start
     cdef float _angle_end
+    # Drawn by the ellipse shader (a quad) rather than as a triangle fan.
+    cdef int _shaded
+    # Met a context whose shader isn't Kivy's default: that shader draws it,
+    # so it needs the fan's geometry.
+    cdef int _needs_fan
 
     def __init__(self, *args, **kwargs):
         Rectangle.__init__(self, **kwargs)
@@ -1161,7 +1232,84 @@ cdef class Ellipse(Rectangle):
         self._angle_start = kwargs.get('angle_start') or 0.0
         self._angle_end = kwargs.get('angle_end') or 360.0
 
+    cdef int uses_shader(self):
+        '''An explicit `segments` asks for that polygon; a custom shader
+        draws the geometry it is given. Otherwise the ellipse shader.'''
+        return self._segments < 3 and not self._needs_fan
+
     cdef void build(self):
+        self._points = []
+        self._shaded = self.uses_shader()
+        if self._shaded:
+            self.build_quad()
+        else:
+            self.batch.set_mode('triangle_fan')
+            self.build_fan()
+
+    cdef void build_quad(self):
+        cdef float *tc = self._tex_coords
+        cdef vertex_t vertices[4]
+        cdef unsigned short *indices = [0, 1, 2, 2, 3, 0]
+        cdef float u0, v0, u1, v1, m
+        cdef int i
+        if self.w == 0 or self.h == 0:
+            self.batch.clear_data()
+            return
+        # One unit past the box on each side, room for the antialiased edge;
+        # texture coordinates carried on past it the same way.
+        m = 1.0
+        u0 = -m / self.w
+        v0 = -m / self.h
+        u1 = 1.0 + m / self.w
+        v1 = 1.0 + m / self.h
+        for i, (u, v) in enumerate(((u0, v0), (u1, v0), (u1, v1), (u0, v1))):
+            vertices[i].x = self.x + u * self.w
+            vertices[i].y = self.y + v * self.h
+            # bilinear over the four corners of tex_coords
+            vertices[i].s0 = ((1 - u) * (1 - v) * tc[0] + u * (1 - v) * tc[2]
+                              + u * v * tc[4] + (1 - u) * v * tc[6])
+            vertices[i].t0 = ((1 - u) * (1 - v) * tc[1] + u * (1 - v) * tc[3]
+                              + u * v * tc[5] + (1 - u) * v * tc[7])
+        self.batch.set_mode('triangles')
+        self.batch.set_data(vertices, 4, indices, 6)
+
+    cdef int apply(self) except -1:
+        cdef RenderContext context = getActiveContext()
+        cdef Shader shader, own
+        cdef double start, end
+        if not self._needs_fan and not context._shader.is_default():
+            # Built (now) as the fan, for that shader.
+            self._needs_fan = 1
+            self.flags |= GI_NEEDS_UPDATE
+        if self.flags & GI_NEEDS_UPDATE:
+            self.build()
+            self.flag_update_done()
+        if not self._shaded:
+            self.batch.draw()
+            return 0
+
+        # The context's state (matrices, color, opacity) carried over to
+        # the ellipse shader for this draw, then the context's shader back.
+        shader = context._shader
+        own = get_ellipse_shader()
+        own.use()
+        for name, stack in context.state_stacks.items():
+            own.set_uniform(name, stack[-1])
+        start = min(self._angle_start, self._angle_end)
+        end = max(self._angle_start, self._angle_end)
+        own.set_uniform('ellipse_rect', [self.x, self.y, self.w, self.h])
+        own.set_uniform('ellipse_arc', [
+            start * 0.017453292519943295, (end - start) * 0.017453292519943295,
+            1.0 if end - start < 360.0 else 0.0])
+        context._shader = own
+        try:
+            self.batch.draw()
+        finally:
+            context._shader = shader
+            shader.use()
+        return 0
+
+    cdef void build_fan(self):
         cdef float *tc = self._tex_coords
         cdef int i, angle_dir
         cdef double angle_start, angle_end, angle_range
@@ -2173,7 +2321,11 @@ cdef class SmoothEllipse(Ellipse):
     cdef void build(self):
         cdef list ellipse_center = []
 
-        if has_texture_set(self) or too_small_for_antialiasing(self):
+        if self.uses_shader():
+            # The ellipse shader antialiases the edge itself.
+            self._antialiasing_line.points = []
+            Ellipse.build(self)
+        elif has_texture_set(self) or too_small_for_antialiasing(self):
             self._antialiasing_line.points = []
             Ellipse.build(self)
         else:

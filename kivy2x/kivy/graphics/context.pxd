@@ -10,6 +10,7 @@ cdef class Context:
     cdef list l_texture
     cdef list l_canvas
     cdef list l_fbo
+    cdef list l_shader
 
     cdef object lr_texture
     cdef list lr_canvas
@@ -22,6 +23,7 @@ cdef class Context:
     cdef void register_texture(self, Texture texture)
     cdef void register_canvas(self, Canvas canvas)
     cdef void register_fbo(self, Fbo fbo)
+    cdef void register_shader(self, Shader shader)
 
     cdef void dealloc_texture(self, Texture texture)
     cdef void dealloc_vbo(self, VBO vbo)

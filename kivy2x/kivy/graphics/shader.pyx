@@ -176,6 +176,7 @@ cdef class Shader:
 
     def __init__(self, str vs=None, str fs=None, str source=None):
         self.program = cgl.glCreateProgram()
+        get_context().register_shader(self)
         if source:
             self.source = source
         else:
@@ -225,6 +226,11 @@ cdef class Shader:
             # driver on virtualbox / win7 ????
             # FIXME maybe include that instruction for glew usage only.
             cgl.glFlush()
+
+    cdef int is_default(self):
+        '''Whether both stages are Kivy's default shader.
+        '''
+        return self._default_vs and self._default_fs
 
     cdef void stop(self):
         '''Stop using the shader.
@@ -666,6 +672,7 @@ cdef class Shader:
             return
         self.vert_src = ""
         self.frag_src = ""
+        self._default_vs = self._default_fs = 0
         glsl_source = "\n"
         Logger.info('Shader: Read <{}>'.format(self._source))
         with open(self._source) as fin:
@@ -694,6 +701,7 @@ cdef class Shader:
 
     @vs.setter
     def vs(self, object source):
+        self._default_vs = source is None
         if source is None:
             source = default_vs
         source = source.replace('$HEADER$', header_vs)
@@ -711,6 +719,7 @@ cdef class Shader:
 
     @fs.setter
     def fs(self, object source):
+        self._default_fs = source is None
         if source is None:
             source = default_fs
         source = source.replace('$HEADER$', header_fs)

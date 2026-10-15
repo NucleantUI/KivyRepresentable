@@ -23,8 +23,12 @@ cdef class Shader:
     cdef object frag_src
     cdef dict uniform_locations
     cdef dict uniform_values
+    # Built from Kivy's default vertex / fragment source.
+    cdef int _default_vs
+    cdef int _default_fs
 
     cdef void use(self)
+    cdef int is_default(self)
     cdef void stop(self)
     cdef int set_uniform(self, str name, value) except -1
     cdef int upload_uniform(self, str name, value) except -1

@@ -1210,8 +1210,8 @@ cdef class Svg(RenderContext):
             y3 = _by + sin2
 
             if isinstance(fill, str):
-                g = self.gradients[fill]
-                r, g, b, a = g.interp(ax, ay)
+                gradient = self.gradients[fill]
+                r, g, b, a = gradient.interp(ax, ay)
 
             vertices[vindex + 2] = vertices[vindex + 10] = \
                 vertices[vindex + 18] = vertices[vindex + 26] = 0

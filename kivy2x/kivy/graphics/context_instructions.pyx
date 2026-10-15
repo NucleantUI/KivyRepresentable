@@ -446,6 +446,7 @@ cdef class LoadIdentity(ContextInstruction):
     .. versionadded:: 1.6.0
     '''
     def __init__(self, **kwargs):
+        ContextInstruction.__init__(self, **kwargs)
         self.stack = kwargs.get('stack', 'modelview_mat')
 
     @property
@@ -514,6 +515,7 @@ cdef class ApplyContextMatrix(ContextInstruction):
     .. versionadded:: 1.6.0
     '''
     def __init__(self, **kwargs):
+        ContextInstruction.__init__(self, **kwargs)
         self.target_stack = kwargs.get('target_stack', 'modelview_mat')
         self.source_stack = kwargs.get('source_stack', 'modelview_mat')
 

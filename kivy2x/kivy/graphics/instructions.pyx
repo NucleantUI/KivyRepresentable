@@ -534,9 +534,10 @@ cdef class Callback(Instruction):
                 cgl.glBindBuffer(GL_ARRAY_BUFFER, 0)
                 cgl.glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
 
-            # reset all the vertexformat in all shaders
+            # reset all the vertexformat in all shaders (the live ones:
+            # lr_shader is the list of programs waiting to be deleted)
             ctx = get_context()
-            for obj in ctx.lr_shader:
+            for obj in ctx.l_shader:
                 shader = obj()
                 if not shader:
                     continue

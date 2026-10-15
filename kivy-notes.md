@@ -125,6 +125,13 @@ registers; every member forwards to `KivyGL.current` (Kivy has one context).
   16-bit indices stay below 0xFFFF: Metal always restarts strips there.
 - Caches are keyed by serial numbers, never object addresses: a VBO Kivy
   deletes and recreates can land at the same address.
+- `GL_OES_standard_derivatives` is advertised: Vulkan GLSL has derivatives
+  built in, so the translator drops its `#extension` line (GLSL won't let
+  `GL_` names be defined, so `#ifdef GL_OES_standard_derivatives` is false).
+- Samplers without mipmap filtering cap the LOD at 0.25 with nearest mip
+  selection, not 0: Vulkan picks min vs mag filter after the clamp, so a cap
+  of 0 always magnifies and GL_NEAREST minification came out linear. 0.25
+  still minifies and rounds to level 0 (ANGLE's choice).
 - Not done (left nil in the table): compressed textures, glCopyTex*,
   glShaderBinary; cube maps; client-side vertex/index arrays (Kivy always
   uses buffers).
@@ -232,6 +239,59 @@ Changed in Kivy (originals of replaced functions kept under a `_` name):
   `root.ids` is an `ObservableDict`, a dict subclass, and the Cython 3 build
   rejects it ("Expected dict, got ObservableDict") as soon as a kv file
   uses `ids`. A bug in kivy2x itself, not nui-specific.
+- Kivy bugs found by `test_render_nui.py`, every backend has them:
+  - `graphics/instructions.pyx` `Callback(reset_context=True)` walked
+    `ctx.lr_shader` (programs waiting to be deleted) to forget each shader's
+    bound vertex format, so it forgot nothing: the reset disabled the vertex
+    attributes and Kivy never enabled them again, and the next draw had no
+    vertices. `Context` now keeps `l_shader` (weak refs, as `l_texture`),
+    `Shader.__init__` registers there (`register_shader`), and the reset
+    walks it.
+  - `graphics/context_instructions.pyx`: `LoadIdentity` and
+    `ApplyContextMatrix` never called `ContextInstruction.__init__`, so a
+    `with canvas:` block never added them. They do now.
+  - `graphics/svg.pyx` `push_line_mesh`: a gradient stroke went into the
+    float `g` (`g = self.gradients[fill]`) and raised. Svg strokes every
+    filled shape with its fill, so any gradient fill hit it. Now
+    `gradient = ...`, as `push_mesh` does.
+  - Not fixed, worked around in the test: Svg reads gradients in user space
+    only and skips a coordinate of 0 (`if v:`).
+- `graphics/vertex_instructions.pyx` `Ellipse` (so every circle in Kivy) is
+  drawn by a shader of its own instead of a CPU-built triangle fan of one
+  segment per 2°: one quad (a unit past the box, for the edge), and the
+  fragment shader's coverage is its distance from the edge in pixels
+  (`dFdx`/`dFdy`), so the edge is exact and antialiased at any size. Arcs
+  (`angle_start`/`angle_end`) cut it with two half-planes through the
+  center, antialiased the same way. Fragments with no coverage are
+  discarded, so it still masks round as a stencil. The context's state
+  (matrices, color, opacity) is carried to the ellipse shader for the draw,
+  then the context's shader is put back. The fan stays for an explicit
+  `segments` (Kivy's way of drawing polygons) and inside a RenderContext
+  whose shader isn't Kivy's default (that shader fills the geometry it's
+  given; `Shader.is_default()` tells). `SmoothEllipse` drops its
+  AntiAliasingLine when the shader draws. The shader is made once per
+  process; a GL context loss (none in nui) doesn't rebuild it.
+- `graphics/vertex_instructions_line.pxi` `Line(circle=…)` /
+  `Line(ellipse=…)` (and `SmoothLine`'s) are drawn by a ring shader instead
+  of a polyline of one segment per 2° with its joints: one quad over the
+  ring, and each fragment finds the closest point on the curve (Newton
+  steps; exact for a circle) and covers by its distance to the stroke's
+  edge, in pixels. Widths as the polyline had them: `width` each side, 1 is
+  a one-pixel line at any scale, SmoothLine solid to `width - 1` and fading
+  over the overdraw width. An arc ends on the normal through its end point
+  (where the polyline's last segment ended): "past the end" is the closest
+  point being outside the arc, and only near the end point does the
+  distance to that normal give the flat end its antialiased edge (a flat
+  ellipse comes back around behind it). Caps none/square/round past it.
+  `close` adds the chord, or the two radii for `close_mode='center-connected'`
+  (ellipses only, as Kivy), joined round. Dashes (width 1 only, as Kivy)
+  are measured along that path (Simpson's rule for an ellipse's arc
+  length) through the dash texture Kivy makes, now `build_dash_texture()`.
+  No stencil pass at alpha < 1: the ring has no overlaps. `points`,
+  `circle`, `ellipse` are made when read (`refresh_points()`). The
+  polyline stays for an explicit `segments`, a closed arc with joints other
+  than round (or center-connected without round caps), and a RenderContext
+  with its own shader.
 - One-word additions: `'nui'` in `kivy_options['window']`
   (`kivy/__init__.py`), the recognized backends in `cgl_init`
   (`graphics/cgl.pyx`), and `('nui', 'window_nui', 'WindowNUI')` first in
@@ -267,11 +327,15 @@ that Python, e.g. the wheel in a `uv venv`):
   App runs from `kivy_nui_tick`, a click reaches a Button, quit stops the
   App and calls `request_close`; Kivy's GL calls land in the host's table.
   Uses Kivy's `mock` GL.
-- `python Tests/kivy/test_render_nui.py`: real Kivy apps (canvas shapes,
-  Label/Button text, StencilView, Fbo) on the Vulkan GL through
-  `libKivyNUIHeadless`; frames read back and checked, saved as PNGs
-  (`KIVY_NUI_SHOTS`). Needs `swift build --product CKivyNUI` and
-  `--product KivyNUIHeadless` first.
+- `python Tests/kivy/test_render_nui.py [word ...]`: real Kivy apps on the
+  Vulkan GL through `libKivyNUIHeadless`, one per group of `progress.md`
+  (canvas, shader circles, shader rings and flat ellipses, widgets,
+  stencil/fbo, the showcase, transforms/state/callbacks,
+  vertex instructions and mesh modes, lines, smooth shapes/tesselator/box
+  shadow/svg, scissor/textures, 3D depth and Kivy's monkey example); frames
+  read back and checked, saved as PNGs (`KIVY_NUI_SHOTS`). Words pick tests
+  by name. Needs `swift build --product CKivyNUI` and `--product
+  KivyNUIHeadless` first.
 - `swift test`: the GL on its own (`KivyGLTests`, through the C table on a
   headless device), the C api, `KivyApp`.
 
@@ -327,3 +391,10 @@ selected:
 - 2026-10-15: PySwiftKit (local), `KivyPython`, `KivyWindowGroup`; the
   playground app runs a kv app from a uv-installed site_packages inside a
   NucleantUI window. Fixed kivy2x's builder.pyx `ids` typing bug.
+- 2026-10-15: every item of `progress.md` verified (new render tests). GL
+  fix: minification without mipmaps honours GL_NEAREST. Kivy fixes:
+  Callback reset_context, LoadIdentity/ApplyContextMatrix, Svg gradients.
+- 2026-10-15: Ellipse drawn by a distance shader (one quad, exact
+  antialiased edge, arcs); derivatives in the GL.
+- 2026-10-15: Line circle/ellipse drawn by a ring shader (caps, closing,
+  dashes, SmoothLine).

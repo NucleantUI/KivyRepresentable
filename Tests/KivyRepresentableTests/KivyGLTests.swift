@@ -267,6 +267,30 @@ struct KivyGLTests {
         #expect(kivy.pixel(pixels, x: 50, y: 50) == white)
     }
 
+    /// A texture shrunk with no mipmaps samples level 0 with MIN_FILTER:
+    /// nearest picks texels, even when MAG_FILTER is linear.
+    @Test func minificationWithoutMipmapsUsesTheMinFilter() throws {
+        let kivy = try KivyLikeClient()
+        let program = kivy.kivyProgram()
+        kivy.setupProjection(program)
+        // A 1-texel checker, 64x64, drawn at 8x8: every pixel lands between
+        // texels, where linear would mix black and white into grey.
+        let checker: [UInt8] = (0..<64).flatMap { y in
+            (0..<64).flatMap { x -> [UInt8] in (x + y) % 2 == 1 ? [255, 255, 255, 255] : [0, 0, 0, 255] }
+        }
+        kivy.texture(width: 64, height: 64, pixels: checker, filter: GL.nearest)
+        kivy.t.glTexParameteri!(GL.texture2D, GL.textureMagFilter, GLint(GL.linear))
+        kivy.rectangle(program, x: 0, y: 0, width: 8, height: 8)
+        let pixels = kivy.read()
+        for y in 0..<8 {
+            for x in 0..<8 {
+                let p = kivy.pixel(pixels, x: x, y: y)
+                #expect(p == black || p == white, "(\(x), \(y)) is \(p)")
+            }
+        }
+        #expect(kivy.error == GL.noError)
+    }
+
     @Test func rgbLuminanceAndBGRAUploadsBecomeRGBA() throws {
         let kivy = try KivyLikeClient(width: 4, height: 4)
         let program = kivy.kivyProgram()
@@ -440,5 +464,33 @@ struct KivyGLTests {
         #expect(version.hasPrefix("OpenGL ES 2.0"))
         let extensions = String(cString: UnsafeRawPointer(kivy.t.glGetString!(GL.extensions)!).assumingMemoryBound(to: CChar.self))
         #expect(extensions.contains("GL_EXT_bgra"))
+        #expect(extensions.contains("GL_OES_standard_derivatives"))
+    }
+
+    /// GLSL ES 1.00 asks for derivatives with an extension; Vulkan GLSL has
+    /// them built in. The fill below is opaque only where the screen-space
+    /// slope of x is one pixel per pixel, which it is for a 1:1 rectangle.
+    @Test func standardDerivativesCompileAndMeasurePixels() throws {
+        let kivy = try KivyLikeClient()
+        kivy.clear(SIMD4(0, 0, 0, 1))
+        let fragment = """
+        #extension GL_OES_standard_derivatives : enable
+        #ifdef GL_ES
+            precision highp float;
+        #endif
+        varying vec4 frag_color;
+        varying vec2 tex_coord0;
+        uniform sampler2D texture0;
+        void main (void){
+            float slope = dFdx(gl_FragCoord.x) + fwidth(gl_FragCoord.y) - 1.0;
+            gl_FragColor = vec4(1.0 - abs(slope - 1.0), 0.0, 0.0, 1.0);
+        }
+        """
+        let program = kivy.kivyProgram(fragment: fragment)
+        kivy.setupProjection(program)
+        kivy.rectangle(program, x: 0, y: 0, width: 32, height: 32)
+        let pixels = kivy.read()
+        #expect(kivy.pixel(pixels, x: 16, y: 16) == red)
+        #expect(kivy.error == GL.noError)
     }
 }

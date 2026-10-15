@@ -333,7 +333,11 @@ extension KivyGL {
         info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT
         info.minLod = 0
         // Without mipmap filtering, or without a chain, GL samples level 0.
-        info.maxLod = mipmapped ? Float(levels - 1) : 0
+        // Vulkan picks min vs mag filter after clamping the LOD, so a cap of
+        // 0 would always magnify; 0.25 still minifies, and nearest mip
+        // selection rounds it to level 0 (ANGLE does the same).
+        info.maxLod = mipmapped ? Float(levels - 1) : 0.25
+        if !mipmapped { info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST }
         var sampler: VkSampler?
         guard vkCreateSampler(device.device, &info, nil, &sampler) == VK_SUCCESS, let sampler else { return nil }
         samplers[key] = sampler

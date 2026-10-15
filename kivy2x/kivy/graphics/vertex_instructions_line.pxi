@@ -34,6 +34,202 @@ cdef inline int line_intersection(double x1, double y1, double x2, double y2,
     py[0] = (u * (y3 - y4) - (y1 - y2) * v) / denom
     return 1
 
+# The ring shader: a circle or ellipse Line drawn as one quad. Each fragment
+# finds the closest point on the curve (Newton steps; exact for a circle)
+# and its coverage is its distance to the stroke's edge, in pixels. An arc
+# ends where the curve's normal through its end point is, as the polyline's
+# last segment did, with Kivy's caps past it; closing it (a chord, or through
+# the center) adds those lines, joined round. Dashes are measured along the
+# path, through the dash texture Kivy makes. Fragments with no coverage are
+# discarded, so a ring as a stencil mask still masks round.
+RING_VS = '''
+$HEADER$
+varying vec2 ring_pos;
+void main (void) {
+    frag_color = color * vec4(1.0, 1.0, 1.0, opacity);
+    tex_coord0 = vTexCoords0;
+    ring_pos = vPosition;
+    gl_Position = projection_mat * modelview_mat * vec4(vPosition.xy, 0.0, 1.0);
+}
+'''
+
+RING_FS = '''
+#extension GL_OES_standard_derivatives : enable
+$HEADER$
+varying vec2 ring_pos;
+/* center x, y; radius x, y */
+uniform vec4 ring_ellipse;
+/* angle_start, angle_end (radians, clockwise from the top), 1 for a full turn */
+uniform vec3 ring_arc;
+/* half width, extra half width in pixels, cap (0 none, 1 square, 2 round),
+   close (0 open, 1 straight line, 2 center connected) */
+uniform vec4 ring_line;
+/* the dash pattern's length; 0 for a solid line */
+uniform float ring_dash;
+
+const float TAU = 6.28318530718;
+
+vec2 on_ring(vec2 r, float a) {
+    return vec2(r.x * sin(a), r.y * cos(a));
+}
+
+/* the direction of travel as Kivy's angle grows */
+vec2 travel(vec2 r, float a) {
+    return normalize(vec2(r.x * cos(a), -r.y * sin(a)));
+}
+
+/* The closest point on the ellipse: its angle, and the distance to it. */
+vec2 closest(vec2 p, vec2 r) {
+    vec2 q = abs(p);
+    float k = r.x * r.x - r.y * r.y;
+    float phi = atan(q.y * r.x, q.x * r.y + 1e-9);
+    for (int i = 0; i < 5; i++) {
+        float s = sin(phi);
+        float c = cos(phi);
+        float f = k * s * c - q.x * r.x * s + q.y * r.y * c;
+        float df = k * (c * c - s * s) - q.x * r.x * c - q.y * r.y * s;
+        if (abs(df) > 1e-9)
+            phi = clamp(phi - f / df, 0.0, 1.57079632679);
+    }
+    vec2 sgn = vec2(p.x < 0.0 ? -1.0 : 1.0, p.y < 0.0 ? -1.0 : 1.0);
+    vec2 cp = sgn * vec2(r.x * cos(phi), r.y * sin(phi));
+    return vec2(atan(sgn.x * cos(phi), sgn.y * sin(phi)), length(p - cp));
+}
+
+/* distance to the segment a b; along: how far along it the closest point is */
+float segment(vec2 p, vec2 a, vec2 b, out float along) {
+    vec2 ab = b - a;
+    float h = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0);
+    along = h * length(ab);
+    return length(p - a - ab * h);
+}
+
+float speed(vec2 r, float a) {
+    return length(vec2(r.x * cos(a), r.y * sin(a)));
+}
+
+/* length along the ellipse from angle a, over delta (signed) */
+float arc_length(vec2 r, float a, float delta) {
+    if (r.x == r.y)
+        return r.x * abs(delta);
+    float h = delta / 16.0;
+    float s = speed(r, a) + speed(r, a + delta);
+    for (int i = 1; i < 16; i++)
+        s += (mod(float(i), 2.0) > 0.5 ? 4.0 : 2.0) * speed(r, a + h * float(i));
+    return abs(s * h / 3.0);
+}
+
+void main (void) {
+    vec2 dx = dFdx(ring_pos);
+    vec2 dy = dFdy(ring_pos);
+    float pixels = inversesqrt(max(0.5 * (dot(dx, dx) + dot(dy, dy)), 1e-12));
+
+    vec2 r = ring_ellipse.zw;
+    vec2 p = ring_pos - ring_ellipse.xy;
+    float w = ring_line.x;
+    float cap = ring_line.z;
+    float close = ring_line.w;
+    float start = ring_arc.x;
+    float end = ring_arc.y;
+    float lo = min(start, end);
+    float span = abs(end - start);
+    float dir = end >= start ? 1.0 : -1.0;
+    bool full = ring_arc.z > 0.5;
+
+    vec2 c = closest(p, r);
+    float t = mod(c.x - lo, TAU);
+    float dist = c.y;
+    /* to the stroke's edge, in the line's units */
+    float d = dist - w;
+
+    /* how far along the arc, from angle_start, the closest point is */
+    float delta = mod(dir * (c.x - start), TAU);
+    if (!full && delta > span)
+        delta = delta - span < TAU - delta ? span : 0.0;
+    float nearest = dist;
+
+    if (!full) {
+        float to_lo = min(t, TAU - t);
+        float u = mod(c.x - lo - span, TAU);
+        float to_hi = min(u, TAU - u);
+        bool near_lo = to_lo <= to_hi;
+        vec2 e_lo = on_ring(r, lo);
+        vec2 e_hi = on_ring(r, lo + span);
+        vec2 o_lo = -travel(r, lo);
+        vec2 o_hi = travel(r, lo + span);
+        vec2 e = near_lo ? e_lo : e_hi;
+        vec2 o = near_lo ? o_lo : o_hi;
+        /* Past the end is where the closest point on the curve is outside
+           the arc, which ends on the normal through the end point. Near
+           that point, the distance to that normal gives the flat end its
+           antialiased edge; farther away, it isn't the arc's end there (an
+           ellipse comes back around behind it). */
+        bool in_arc = t <= span;
+        float along = abs(dot(p - e, o));
+        bool at_end = length(p - e) < 1.5 * w + (2.0 + ring_line.y) / pixels;
+        float cut = in_arc ? -(at_end ? along : 1e6) : (at_end ? along : 1e6);
+        if (cap < 0.5)
+            d = max(dist - w, cut);
+        else if (cap < 1.5)
+            d = in_arc ? dist - w : max(abs(dot(p - e, vec2(-o.y, o.x))) - w, cut - w);
+        else
+            d = in_arc ? dist - w : length(p - e) - w;
+        if (!in_arc)
+            nearest = 1e6;
+
+        /* the other end's cap, where it reaches across the gap */
+        vec2 e2 = near_lo ? e_hi : e_lo;
+        vec2 o2 = near_lo ? o_hi : o_lo;
+        float along2 = dot(p - e2, o2);
+        if (cap > 1.5)
+            d = min(d, length(p - e2) - w);
+        else if (cap > 0.5)
+            d = min(d, max(max(abs(dot(p - e2, vec2(-o2.y, o2.x))) - w, along2 - w), -along2));
+    }
+
+    /* the path, for dashes: [center to start,] the arc, [end back to start
+       or to the center] */
+    float lead = close > 1.5 ? length(on_ring(r, start)) : 0.0;
+    float s = lead + (ring_dash > 0.0 ? arc_length(r, start, dir * delta) : 0.0);
+    if (close > 0.5) {
+        vec2 e_start = on_ring(r, start);
+        vec2 e_end = on_ring(r, end);
+        float total = ring_dash > 0.0 ? arc_length(r, start, end - start) : 0.0;
+        float along;
+        if (close < 1.5) {
+            if (!full) {
+                float d1 = segment(p, e_end, e_start, along);
+                d = min(d, d1 - w);
+                if (d1 < nearest) { nearest = d1; s = lead + total + along; }
+            }
+        } else {
+            float d1 = segment(p, vec2(0.0), e_start, along);
+            d = min(d, d1 - w);
+            if (d1 < nearest) { nearest = d1; s = along; }
+            float d2 = segment(p, e_end, vec2(0.0), along);
+            d = min(d, d2 - w);
+            if (d2 < nearest) { nearest = d2; s = lead + total + along; }
+        }
+    }
+
+    float coverage = clamp(0.5 - (d * pixels - ring_line.y), 0.0, 1.0);
+    if (coverage <= 0.0)
+        discard;
+    vec4 col = frag_color;
+    if (ring_dash > 0.0)
+        col *= texture2D(texture0, vec2(s / ring_dash, 0.5));
+    gl_FragColor = vec4(col.rgb, col.a * coverage);
+}
+'''
+
+cdef Shader ring_shader = None
+
+cdef Shader get_ring_shader():
+    global ring_shader
+    if ring_shader is None:
+        ring_shader = Shader(vs=RING_VS, fs=RING_FS)
+    return ring_shader
+
 cdef class Line(VertexInstruction):
     '''A 2d line.
 
@@ -144,6 +340,17 @@ cdef class Line(VertexInstruction):
     cdef double _bxmin, _bxmax, _bymin, _bymax
     cdef tuple _mode_args
     cdef tuple _rounded_rectangle, _rectangle, _ellipse, _circle
+    # A circle or ellipse drawn by the ring shader (a quad), not as a
+    # polyline; its points are then made only when asked for.
+    cdef int _shaded
+    cdef int _points_stale
+    # Met a context whose shader isn't Kivy's default: that shader draws it,
+    # so it needs the polyline's geometry.
+    cdef int _needs_polyline
+    # center x, y, radius x, y, angle_start, angle_end, of the ring
+    cdef double _ring[6]
+    # the dash pattern's length on the ring, 0 for a solid line
+    cdef int _ring_dash
 
     def __init__(self, **kwargs):
         super(Line, self).__init__(**kwargs)
@@ -181,6 +388,11 @@ cdef class Line(VertexInstruction):
             self.bezier = kwargs['bezier']
 
     cdef void build(self):
+        self._shaded = self.uses_ring()
+        if self._shaded:
+            self.build_ring()
+            return
+        self._points_stale = 0
         if self._mode == LINE_MODE_ELLIPSE:
             self.prebuild_ellipse()
         elif self._mode == LINE_MODE_CIRCLE:
@@ -196,6 +408,155 @@ cdef class Line(VertexInstruction):
         else:
             self.build_extended()
 
+    cdef int is_hairline(self):
+        return self._width == 1.0 and self._force_custom_drawing_method == 0
+
+    cdef int ring_shape(self):
+        '''A circle or ellipse, unless it asks for a polygon (explicit
+        segments) or a custom shader draws it.'''
+        cdef tuple args = self._mode_args
+        if self._needs_polyline:
+            return 0
+        if self._mode == LINE_MODE_CIRCLE:
+            return len(args) != 6
+        if self._mode == LINE_MODE_ELLIPSE:
+            return not (len(args) == 7 and args[6] >= 3)
+        return 0
+
+    cdef int ring_close(self):
+        '''0 open, 1 closed by a straight line, 2 through the center
+        (an ellipse only, as Kivy does).'''
+        if not self._close:
+            return 0
+        if self._close_mode == 'straight-line':
+            return 1
+        return 2 if self._mode == LINE_MODE_ELLIPSE else 0
+
+    cdef int uses_ring(self):
+        '''The ring shader joins a closed arc's corners round: with other
+        joints, or center connected without round caps (its ends are at
+        the center), the polyline draws it.'''
+        cdef int close
+        if not self.ring_shape():
+            return 0
+        if self.is_hairline():
+            return 1
+        close = self.ring_close()
+        if close and self._joint != LINE_JOINT_ROUND:
+            return 0
+        if close == 2 and self._cap != LINE_CAP_ROUND:
+            return 0
+        return 1
+
+    cdef list ring_line(self):
+        '''For the shader: half width, extra half width in pixels, cap,
+        close.'''
+        cdef int close = self.ring_close()
+        if self.is_hairline():
+            return [0.0, 0.5, 0.0, float(close)]
+        return [self._width, 0.0, 2.0 if close else float(self._cap), float(close)]
+
+    cdef void build_ring(self):
+        '''A quad over the ring, with room for the stroke and its
+        antialiased edge.'''
+        cdef tuple args = self._mode_args
+        cdef double x, y, rx, ry, w, h, m, angle_start = 0, angle_end = 360
+        cdef vertex_t vertices[4]
+        cdef unsigned short *indices = [0, 1, 2, 2, 3, 0]
+        cdef int i
+        self._points_stale = 1
+        if self._mode == LINE_MODE_CIRCLE:
+            if len(args) == 3:
+                x, y, rx = args
+            else:
+                x, y, rx, angle_start, angle_end = args
+            ry = rx = abs(rx)
+        else:
+            if len(args) == 4:
+                x, y, w, h = args
+            else:
+                x, y, w, h, angle_start, angle_end = args[:6]
+            rx = abs(w) * 0.5
+            ry = abs(h) * 0.5
+            x += w * 0.5
+            y += h * 0.5
+        self._ring[0] = x
+        self._ring[1] = y
+        self._ring[2] = rx
+        self._ring[3] = ry
+        self._ring[4] = angle_start
+        self._ring[5] = angle_end
+
+        # the dash texture on a hairline, as the polyline had it; no texture
+        # otherwise
+        self._ring_dash = 0
+        if self.is_hairline():
+            self._ring_dash = self.build_dash_texture()
+        elif self.texture is not None and not isinstance(self, SmoothLine):
+            self.texture = None
+
+        if rx == 0 or ry == 0 or angle_start == angle_end:
+            self.batch.clear_data()
+            return
+        m = self.ring_line()[0] * 1.5 + 2.0
+        for i, (u, v) in enumerate(((-1, -1), (1, -1), (1, 1), (-1, 1))):
+            vertices[i].x = <float>(x + u * (rx + m))
+            vertices[i].y = <float>(y + v * (ry + m))
+            vertices[i].s0 = 0
+            vertices[i].t0 = 0
+        self.batch.set_mode('triangles')
+        self.batch.set_data(vertices, 4, indices, 6)
+
+    cdef void refresh_points(self):
+        '''The points of a ring the shader draws, made when asked for.'''
+        if not self._points_stale:
+            return
+        self._points_stale = 0
+        if self._mode == LINE_MODE_CIRCLE:
+            self.prebuild_circle()
+        elif self._mode == LINE_MODE_ELLIPSE:
+            self.prebuild_ellipse()
+
+    cdef int apply_ring(self) except -1:
+        '''Builds if needed; draws it and returns 1 if the ring shader
+        draws it.'''
+        cdef RenderContext context = getActiveContext()
+        cdef Shader shader, own
+        cdef double start, end
+        if (self._mode == LINE_MODE_CIRCLE or self._mode == LINE_MODE_ELLIPSE) \
+                and not self._needs_polyline and not context._shader.is_default():
+            # Built (now) as the polyline, for that shader.
+            self._needs_polyline = 1
+            self.flags |= GI_NEEDS_UPDATE
+        if self.flags & GI_NEEDS_UPDATE:
+            self.build()
+            self.flag_update_done()
+        if not self._shaded:
+            return 0
+
+        # The context's state (matrices, color, opacity) carried over to
+        # the ring shader for this draw, then the context's shader back.
+        shader = context._shader
+        own = get_ring_shader()
+        own.use()
+        for name, stack in context.state_stacks.items():
+            own.set_uniform(name, stack[-1])
+        start = self._ring[4]
+        end = self._ring[5]
+        own.set_uniform('ring_ellipse', [self._ring[0], self._ring[1], self._ring[2], self._ring[3]])
+        own.set_uniform('ring_arc', [
+            start * 0.017453292519943295, end * 0.017453292519943295,
+            1.0 if abs(end - start) >= 360.0 else 0.0])
+        own.set_uniform('ring_line', self.ring_line())
+        own.set_uniform('ring_dash', float(self._ring_dash))
+        context._shader = own
+        try:
+            self.batch.draw()
+        finally:
+            context._shader = shader
+            shader.use()
+        return 1
+
     cdef void ensure_stencil(self):
         if self._stencil_rect == None:
             self._stencil_rect = Rectangle()
@@ -205,6 +566,8 @@ cdef class Line(VertexInstruction):
             self._stencil_unuse = StencilUnUse()
 
     cdef int apply(self) except -1:
+        if self.apply_ring():
+            return 0
         if self._width == 1. and self._force_custom_drawing_method == 0:
             VertexInstruction.apply(self)
             return 0
@@ -227,28 +590,14 @@ cdef class Line(VertexInstruction):
             VertexInstruction.apply(self)
         return 0
 
-    cdef void build_legacy(self):
-        cdef int i
-        cdef long count = <int>int(len(self.points) / 2.)
-        cdef list p = self.points
-        cdef vertex_t *vertices = NULL
-        cdef unsigned short *indices = NULL
-        cdef float tex_x
-        cdef char *buf = NULL
+    cdef int build_dash_texture(self):
+        '''The dash texture, one texel per unit of the pattern; returns the
+        pattern's length, 0 when the line isn't dashed.'''
         cdef Texture texture = self.texture
+        cdef char *buf = NULL
         cdef int length = 0
         cdef int position = 0
         cdef int val
-
-        if count < 2:
-            self.batch.clear_data()
-            return
-
-        if self._close and self._close_mode == 'straight-line':
-            p = p + [p[0], p[1]]
-            count += 1
-
-        self.batch.set_mode('line_strip')
 
         if self._dash_list:
             length = sum(self._dash_list)
@@ -294,6 +643,28 @@ cdef class Line(VertexInstruction):
 
         elif texture is not None:
             self.texture = None
+        return length
+
+    cdef void build_legacy(self):
+        cdef int i
+        cdef long count = <int>int(len(self.points) / 2.)
+        cdef list p = self.points
+        cdef vertex_t *vertices = NULL
+        cdef unsigned short *indices = NULL
+        cdef float tex_x
+        cdef int length = 0
+
+        if count < 2:
+            self.batch.clear_data()
+            return
+
+        if self._close and self._close_mode == 'straight-line':
+            p = p + [p[0], p[1]]
+            count += 1
+
+        self.batch.set_mode('line_strip')
+
+        length = self.build_dash_texture()
 
         vertices = <vertex_t *>malloc(count * sizeof(vertex_t))
         if vertices == NULL:
@@ -732,6 +1103,7 @@ cdef class Line(VertexInstruction):
             list. It can be very CPU expensive.
         '''
         def __get__(self):
+            self.refresh_points()
             return self._points
 
         def __set__(self, points):
@@ -740,6 +1112,7 @@ cdef class Line(VertexInstruction):
             else:
                 self._points = list(points)
 
+            self._points_stale = 0
             self._mode = LINE_MODE_POINTS
             self.flag_data_update()
 
@@ -981,6 +1354,7 @@ cdef class Line(VertexInstruction):
         '''
 
         def __get__(self):
+            self.refresh_points()
             return self._ellipse
 
         def __set__(self, args):
@@ -1096,6 +1470,7 @@ cdef class Line(VertexInstruction):
         '''
 
         def __get__(self):
+            self.refresh_points()
             return self._circle
 
         def __set__(self, args):
@@ -1486,6 +1861,11 @@ cdef class SmoothLine(Line):
         texture.blit_buffer(GRADIENT_DATA, colorfmt="rgba")
 
     cdef void build(self):
+        self._shaded = self.uses_ring()
+        if self._shaded:
+            self.build_ring()
+            return
+        self._points_stale = 0
         if self._mode == LINE_MODE_ELLIPSE:
             self.prebuild_ellipse()
         elif self._mode == LINE_MODE_CIRCLE:
@@ -1499,7 +1879,24 @@ cdef class SmoothLine(Line):
 
         self.build_smooth()
 
+    cdef int is_hairline(self):
+        return 0
+
+    cdef int uses_ring(self):
+        # No caps or joints to honor: the shader's edge is antialiased
+        # anyway.
+        return self.ring_shape()
+
+    cdef list ring_line(self):
+        # Solid to width - 1, fading out over the overdraw width, as the
+        # polyline's texture does: the edge half way through the fade.
+        cdef int close = self.ring_close()
+        return [max(0., self._width - 1.) + self._owidth * 0.5, 0.0,
+                2.0 if close else 0.0, float(close)]
+
     cdef int apply(self) except -1:
+        if self.apply_ring():
+            return 0
         VertexInstruction.apply(self)
         return 0
 

@@ -46,6 +46,7 @@ cdef class Context:
         self.l_texture = []
         self.l_canvas = []
         self.l_fbo = []
+        self.l_shader = []
         self.flush()
 
     def trigger_gl_dealloc(self):
@@ -77,6 +78,9 @@ cdef class Context:
 
     cdef void register_fbo(self, Fbo fbo):
         self.l_fbo.append(ref(fbo, self.l_fbo.remove))
+
+    cdef void register_shader(self, Shader shader):
+        self.l_shader.append(ref(shader, self.l_shader.remove))
 
     cdef void dealloc_texture(self, Texture texture):
         cdef array arr
