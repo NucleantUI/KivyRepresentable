@@ -52,6 +52,14 @@ final class InputEvents {
 @MainActor
 struct KivyInputTests {
 
+    @Test func itWantsOnlyWhatIsInItsFrame() {
+        let input = InputEvents().input
+        #expect(input.windowWantsInput(at: Point(x: 100, y: 50)))
+        #expect(input.windowWantsInput(at: Point(x: 299, y: 149)))
+        #expect(!input.windowWantsInput(at: Point(x: 99, y: 60)))
+        #expect(!input.windowWantsInput(at: Point(x: 150, y: 150)))
+    }
+
     @Test func aPressInTheFrameIsKivysInItsOwnPoints() {
         let sent = InputEvents()
         #expect(sent.input.windowMouseDown(at: Point(x: 110, y: 60), modifiers: []))

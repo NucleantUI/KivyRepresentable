@@ -47,6 +47,12 @@ final class KivyInput: WindowInputDelegate {
         self.keyboard = KivyKeyboard(send: send)
     }
 
+    /// Only Kivy's frame: input anywhere else is never Kivy's, and costs the
+    /// window nothing more.
+    func windowWantsInput(at point: Point) -> Bool {
+        frame.contains(point)
+    }
+
     // MARK: - Mouse
 
     func windowMouseDown(at point: Point, modifiers: EventModifiers) -> Bool {
