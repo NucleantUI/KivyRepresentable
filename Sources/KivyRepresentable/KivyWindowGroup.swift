@@ -13,8 +13,8 @@
 //      `App.run()` returns, since the host ticks Kivy from here on;
 //    - every engine frame (`onUpdate`) ticks Kivy, which draws and presents
 //      into the slot's image before the frame composites it;
-//    - presses and drags on the window go to Kivy as SDL's mouse events,
-//      and its keys as SDL's key and text events (KivyKeyboard).
+//    - the window's input goes to Kivy as SDL's events (KivyInput, the
+//      window's input delegate).
 //
 //  Only a `KivyApp` can show one: its windows render with `KivyRenderNode`.
 //
@@ -49,25 +49,21 @@ public struct KivyWindowGroup: Scene {
     public func _lowerCommands(into menuBar: MenuBar) {}
 }
 
-/// Fills the window and passes the pointer and the keys on to Kivy. Draws nothing:
-/// Kivy's slot covers it.
+/// Fills the window and hands its input to Kivy. Draws nothing: Kivy's slot
+/// covers it.
 @View
 struct KivyView {
     let session: KivySession
     @Environment(\.displayScale) var displayScale
     @Environment(\.kivyLauncher) var launcher
+    @Environment(\.windowInput) var windowInput
 
     var body: some View {
         Color.clear
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { session.drag(to: $0.location) }
-                    .onEnded { session.release(at: $0.location) }
-            )
-            .focusable()
-            .onKeyPress(phases: .all) { session.keyPress($0) }
-            .onAppear { session.start(launcher: launcher, displayScale: displayScale) }
+            .onAppear {
+                windowInput?.delegate = session.input
+                session.start(launcher: launcher, displayScale: displayScale)
+            }
             .onChange(of: displayScale) { _, scale in session.displayScale = scale }
     }
 }
@@ -85,12 +81,12 @@ final class KivySession {
 
     private var launcher: KivyLauncher?
     private var host: KivyHost?
-    private var keyboard: KivyKeyboard?
+    /// The window's input, for Kivy.
+    private(set) lazy var input = KivyInput { [weak self] event in self?.host?.push(event) }
     private var node: KivyShaderNode<KivyRenderNode>?
     private var container: KivyRenderNode?
     private var device: KivyGLDevice?
     private var pixelSize = (width: 0, height: 0)
-    private var pressed = false
 
     init(module: String) {
         self.module = module
@@ -133,14 +129,12 @@ final class KivySession {
                 node?.dirty.toggle()
             }
             host.register()
-            let keyboard = KivyKeyboard { [weak host] in host?.push($0) }
-            keyboard.connectSystemKeyboard(host)
+            input.keyboard.connectSystemKeyboard(host)
 
             self.device = device
             self.node = node
             self.container = container
             self.host = host
-            self.keyboard = keyboard
             self.launcher = launcher
             engine.onUpdate = { [weak self] dt in
                 MainActor.assumeIsolated { self?.frame(dt) }
@@ -173,7 +167,9 @@ final class KivySession {
             resizeSlot()
             host.resize(metrics())
         }
-        keyboard?.readSystemKeyboard()
+        let scale = displayScale > 0 ? displayScale : 1
+        input.frame = Rect(x: 0, y: 0, width: Double(pixelSize.width) / scale, height: Double(pixelSize.height) / scale)
+        input.keyboard.readSystemKeyboard()
         host.tick(dt)
     }
 
@@ -192,35 +188,5 @@ final class KivySession {
         } catch {
             print("KivyWindowGroup: resizing Kivy's image failed: \(error)")
         }
-    }
-
-    // MARK: - Keys, while the window has them
-
-    func keyPress(_ press: KeyPress) -> KeyPress.Result {
-        keyboard?.press(press) ?? .ignored
-    }
-
-    // MARK: - Pointer, as SDL reported it: window points, top-left
-
-    func drag(to location: Point) {
-        if !pressed {
-            pressed = true
-            push(KIVY_NUI_EVENT_MOUSE_MOTION, location)
-            push(KIVY_NUI_EVENT_MOUSE_BUTTON_DOWN, location)
-        } else {
-            push(KIVY_NUI_EVENT_MOUSE_MOTION, location)
-        }
-    }
-
-    func release(at location: Point) {
-        pressed = false
-        push(KIVY_NUI_EVENT_MOUSE_BUTTON_UP, location)
-    }
-
-    private func push(_ type: KivyNUIEventType, _ location: Point) {
-        var event = KivyNUIEvent()
-        event.type = type
-        event.mouse = KivyNUIMouseEvent(x: Int32(location.x.rounded()), y: Int32(location.y.rounded()), button: 1)
-        host?.push(event)
     }
 }

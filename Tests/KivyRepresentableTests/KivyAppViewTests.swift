@@ -66,7 +66,7 @@ struct KivyAppViewTests {
 
     @Test func appearingShows() {
         let session = KivyAppSession(module: "playground")
-        session.appear(launcher: KivyLauncher(sitePackages: []), displayScale: 2)
+        session.appear(launcher: KivyLauncher(sitePackages: []), displayScale: 2, windowInput: nil)
         #expect(session.isShown)
         #expect(session.displayScale == 2)
     }
@@ -81,7 +81,7 @@ struct KivyAppViewTests {
 
     @Test func disappearingHidesAndStopsWaiting() {
         let session = KivyAppSession(module: "playground")
-        session.appear(launcher: KivyLauncher(sitePackages: []), displayScale: 1)
+        session.appear(launcher: KivyLauncher(sitePackages: []), displayScale: 1, windowInput: nil)
         session.placed(in: Rect(x: 0, y: 0, width: 100, height: 100))
         session.disappear()
         #expect(!session.isShown)

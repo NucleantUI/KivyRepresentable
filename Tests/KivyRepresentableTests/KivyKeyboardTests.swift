@@ -33,21 +33,23 @@ struct KivyKeyboardTests {
 
     @Test func aTypedLetterIsItsKeyAndItsText() {
         let sent = SentEvents()
-        #expect(sent.keyboard.press(KeyPress(phase: .down, key: "a", characters: "a", modifiers: [])) == .handled)
-        #expect(sent.keyboard.press(KeyPress(phase: .up, key: "a", characters: "a", modifiers: [])) == .handled)
+        sent.keyboard.keyDown(keyCode: 0x00, characters: "a", modifiers: [])
+        sent.keyboard.keyUp(keyCode: 0x00, characters: "a", modifiers: [])
         #expect(sent.events == [.down(97, 0), .text("a"), .up(97, 0)])
     }
 
     @Test func shiftKeepsTheUnshiftedKeycodeAndTypesTheShiftedCharacter() {
         let sent = SentEvents()
-        _ = sent.keyboard.press(KeyPress(phase: .down, key: "a", characters: "A", modifiers: .shift))
+        sent.keyboard.keyDown(keyCode: 0x00, characters: "A", modifiers: .shift)
         #expect(sent.events == [.down(97, 0x0001), .text("A")])
     }
 
     @Test func aShortcutIsTheKeyOnly() {
         let sent = SentEvents()
-        _ = sent.keyboard.press(KeyPress(phase: .down, key: "c", characters: "c", modifiers: .command))
-        _ = sent.keyboard.press(KeyPress(phase: .down, key: "a", characters: "a", modifiers: .control))
+        sent.keyboard.keyDown(keyCode: 0x08, characters: "c", modifiers: .command)
+        // Control makes a control character of the letter: the key is still
+        // the letter's.
+        sent.keyboard.keyDown(keyCode: 0x00, characters: "\u{01}", modifiers: .control)
         #expect(sent.events == [.down(99, 0x0400), .down(97, 0x0040)])
     }
 
@@ -55,22 +57,22 @@ struct KivyKeyboardTests {
         let sent = SentEvents()
         // macOS gives the arrows private-use characters, return a "\r" and
         // backspace a DEL: none of it is typed text.
-        _ = sent.keyboard.press(KeyPress(phase: .down, key: .delete, characters: "\u{7F}", modifiers: []))
-        _ = sent.keyboard.press(KeyPress(phase: .down, key: .return, characters: "\r", modifiers: []))
-        _ = sent.keyboard.press(KeyPress(phase: .down, key: .leftArrow, characters: "\u{F702}", modifiers: []))
-        _ = sent.keyboard.press(KeyPress(phase: .repeat, key: .rightArrow, characters: "\u{F703}", modifiers: .shift))
+        sent.keyboard.keyDown(keyCode: 0x33, characters: "\u{7F}", modifiers: [])
+        sent.keyboard.keyDown(keyCode: 0x24, characters: "\r", modifiers: [])
+        sent.keyboard.keyDown(keyCode: 0x7B, characters: "\u{F702}", modifiers: [])
+        sent.keyboard.keyDown(keyCode: 0x7C, characters: "\u{F703}", modifiers: .shift)
         #expect(sent.events == [.down(8, 0), .down(13, 0), .down(1073741904, 0), .down(1073741903, 0x0001)])
     }
 
     @Test func everyNamedKeyHasSDLsKeycode() {
         let keyboard = SentEvents().keyboard
-        let codes: [(KeyEquivalent, Int32)] = [
-            (.return, 13), (.escape, 27), (.delete, 8), (.tab, 9), (.space, 32),
-            (.upArrow, 1073741906), (.downArrow, 1073741905), (.leftArrow, 1073741904), (.rightArrow, 1073741903),
-            (.home, 1073741898), (.end, 1073741901), (.pageUp, 1073741899), (.pageDown, 1073741902),
+        let codes: [(UInt16, Int32)] = [
+            (0x24, 13), (0x4C, 13), (0x35, 27), (0x33, 8), (0x75, 127), (0x30, 9), (0x31, 32),
+            (0x7E, 1073741906), (0x7D, 1073741905), (0x7B, 1073741904), (0x7C, 1073741903),
+            (0x73, 1073741898), (0x77, 1073741901), (0x74, 1073741899), (0x79, 1073741902),
         ]
-        for (key, code) in codes {
-            #expect(keyboard.keycode(for: key) == code)
+        for (keyCode, code) in codes {
+            #expect(keyboard.keycode(keyCode: keyCode, characters: nil) == code)
         }
     }
 

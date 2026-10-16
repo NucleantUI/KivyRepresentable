@@ -16,9 +16,9 @@
 //      slot, the host, the view's module run as `__main__`, as
 //      KivyWindowGroup does — then keeps the slot on the view's frame and
 //      ticks Kivy;
-//    - presses and drags on the view go to Kivy as SDL's mouse events, in
-//      the view's own points; a press gives the view the keys, which go to
-//      Kivy as SDL's key and text events (KivyKeyboard).
+//    - the window's input over the view goes to Kivy as SDL's events, in
+//      the view's own points, before the views see it (KivyInput, the
+//      window's input delegate while the view is in the tree).
 //
 //  Kivy runs once per process — one window, one app — so there is one
 //  session, started by the first KivyAppView to appear, and every
@@ -52,6 +52,7 @@ public struct KivyAppView {
     let module: String
     @Environment(\.displayScale) var displayScale
     @Environment(\.kivyLauncher) var launcher
+    @Environment(\.windowInput) var windowInput
 
     public init(module: String, _viewID: ViewID = #viewID) {
         self.module = module
@@ -62,16 +63,8 @@ public struct KivyAppView {
         let session = KivyAppSession.running(module: module)
         KivyAppFrame(session: session) {
             Color.clear
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { session.drag(to: $0.location) }
-                        .onEnded { session.release(at: $0.location) }
-                )
         }
-        .focusable()
-        .onKeyPress(phases: .all) { session.keyPress($0) }
-        .onAppear { session.appear(launcher: launcher, displayScale: displayScale) }
+        .onAppear { session.appear(launcher: launcher, displayScale: displayScale, windowInput: windowInput) }
         .onDisappear { session.disappear() }
         .onChange(of: displayScale) { _, scale in session.displayScale = scale }
     }
@@ -146,12 +139,13 @@ final class KivyAppSession {
 
     private var launcher: KivyLauncher?
     private var host: KivyHost?
-    private var keyboard: KivyKeyboard?
+    /// The window's input over the view, for Kivy.
+    private(set) lazy var input = KivyInput { [weak self] event in self?.host?.push(event) }
+    private weak var windowInput: WindowInput?
     private var node: KivyShaderNode<KivyRenderNode>?
     private var container: KivyRenderNode?
     private var device: KivyGLDevice?
     private var pixelSize = (width: 0, height: 0)
-    private var pressed = false
 
     init(module: String) {
         self.module = module
@@ -173,20 +167,24 @@ final class KivyAppSession {
 
     func placed(in rect: Rect) {
         bounds = rect
+        input.frame = rect
         if engine == nil, !Self.awaitingEngine.contains(where: { $0 === self }) {
             Self.awaitingEngine.append(self)
         }
     }
 
-    func appear(launcher: KivyLauncher, displayScale: Double) {
+    func appear(launcher: KivyLauncher, displayScale: Double, windowInput: WindowInput?) {
         self.launcher = launcher
         self.displayScale = displayScale > 0 ? displayScale : 1
+        self.windowInput = windowInput
+        windowInput?.delegate = input
         isShown = true
         container?.compositesToWindow = true
     }
 
     func disappear() {
         isShown = false
+        if windowInput?.delegate === input { windowInput?.delegate = nil }
         container?.compositesToWindow = false
         Self.awaitingEngine.removeAll { $0 === self }
     }
@@ -220,7 +218,7 @@ final class KivyAppSession {
         if let node {
             container.compositeRect = SIMD4(Double(frame.x), Double(frame.y), Double(node.width), Double(node.height))
         }
-        keyboard?.readSystemKeyboard()
+        input.keyboard.readSystemKeyboard()
         host.tick(dt)
     }
 
@@ -261,14 +259,12 @@ final class KivyAppSession {
                 node?.dirty.toggle()
             }
             host.register()
-            let keyboard = KivyKeyboard { [weak host] in host?.push($0) }
-            keyboard.connectSystemKeyboard(host)
+            input.keyboard.connectSystemKeyboard(host)
 
             self.device = device
             self.node = node
             self.container = container
             self.host = host
-            self.keyboard = keyboard
             try launcher.setDensity(displayScale)
             try launcher.runModule(module)
         } catch {
@@ -302,35 +298,5 @@ final class KivyAppSession {
         } catch {
             print("KivyAppView: resizing Kivy's image failed: \(error)")
         }
-    }
-
-    // MARK: - Keys, while the view has them
-
-    func keyPress(_ press: KeyPress) -> KeyPress.Result {
-        keyboard?.press(press) ?? .ignored
-    }
-
-    // MARK: - Pointer, as SDL reported it: the view's points, top-left
-
-    func drag(to location: Point) {
-        if !pressed {
-            pressed = true
-            push(KIVY_NUI_EVENT_MOUSE_MOTION, location)
-            push(KIVY_NUI_EVENT_MOUSE_BUTTON_DOWN, location)
-        } else {
-            push(KIVY_NUI_EVENT_MOUSE_MOTION, location)
-        }
-    }
-
-    func release(at location: Point) {
-        pressed = false
-        push(KIVY_NUI_EVENT_MOUSE_BUTTON_UP, location)
-    }
-
-    private func push(_ type: KivyNUIEventType, _ location: Point) {
-        var event = KivyNUIEvent()
-        event.type = type
-        event.mouse = KivyNUIMouseEvent(x: Int32(location.x.rounded()), y: Int32(location.y.rounded()), button: 1)
-        host?.push(event)
     }
 }

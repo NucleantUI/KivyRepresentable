@@ -7,7 +7,7 @@
 //  Kivy's TextInput inserts the text and acts on the keys (backspace,
 //  return, the arrows, shortcuts).
 //
-//  The keys come from the window, through `.onKeyPress` on the Kivy view;
+//  The keys come from the window as it reports them, through KivyInput;
 //  where the system has an on-screen keyboard Kivy asks for (the browser's,
 //  +Wasm), from that too.
 //
@@ -24,21 +24,19 @@ final class KivyKeyboard {
         self.send = send
     }
 
-    /// A key on the window: down (and each repeat) as KEY_DOWN, plus its
-    /// characters as TEXT_INPUT unless a shortcut modifier is held; up as
-    /// KEY_UP.
-    func press(_ press: KeyPress) -> KeyPress.Result {
-        let keycode = keycode(for: press.key)
-        let mod = mod(for: press.modifiers)
-        if press.phase == .up {
-            key(KIVY_NUI_EVENT_KEY_UP, keycode: keycode, mod: mod)
-            return .handled
+    /// A key pressed on the window (and each repeat), as the window reports
+    /// it: KEY_DOWN, plus its characters as TEXT_INPUT unless a shortcut
+    /// modifier is held.
+    func keyDown(keyCode: UInt16, characters: String?, modifiers: EventModifiers) {
+        key(KIVY_NUI_EVENT_KEY_DOWN, keycode: keycode(keyCode: keyCode, characters: characters), mod: mod(for: modifiers))
+        if modifiers.isDisjoint(with: [.command, .control]), let characters {
+            text(characters)
         }
-        key(KIVY_NUI_EVENT_KEY_DOWN, keycode: keycode, mod: mod)
-        if press.modifiers.isDisjoint(with: [.command, .control]) {
-            text(press.characters)
-        }
-        return .handled
+    }
+
+    /// A key let go on the window: KEY_UP.
+    func keyUp(keyCode: UInt16, characters: String?, modifiers: EventModifiers) {
+        key(KIVY_NUI_EVENT_KEY_UP, keycode: keycode(keyCode: keyCode, characters: characters), mod: mod(for: modifiers))
     }
 
     func key(_ type: KivyNUIEventType, keycode: Int32, mod: UInt16) {
@@ -79,25 +77,31 @@ final class KivyKeyboard {
         scalar.value >= 0x20 && scalar.value != 0x7F && !(0xF700...0xF8FF).contains(scalar.value)
     }
 
-    /// SDL2's keycode for `key`: a character's own, unshifted; the others'
-    /// SDLK_* values.
-    func keycode(for key: KeyEquivalent) -> Int32 {
-        switch key {
-        case .return: 13
-        case .escape: 27
-        case .delete: 8 // the backspace key
-        case .tab: 9
-        case .space: 32
-        case .rightArrow: 1073741903
-        case .leftArrow: 1073741904
-        case .downArrow: 1073741905
-        case .upArrow: 1073741906
-        case .home: 1073741898
-        case .pageUp: 1073741899
-        case .end: 1073741901
-        case .pageDown: 1073741902
-        case .character(let character):
-            Int32(bitPattern: String(character).lowercased().unicodeScalars.first?.value ?? 0)
+    /// SDL2's keycode for the window's key: the SDLK_* value of a key that
+    /// edits or moves (`keyCode` is the platform's virtual key code, the
+    /// same codes on every platform as `NSEvent.keyCode`); otherwise the
+    /// character it typed, unshifted — with control held, the letter, not
+    /// the control character the system made of it.
+    func keycode(keyCode: UInt16, characters: String?) -> Int32 {
+        switch keyCode {
+        case 0x24, 0x4C: return 13 // return, keypad enter
+        case 0x35: return 27 // escape
+        case 0x33: return 8 // the backspace key
+        case 0x75: return 127 // forward delete
+        case 0x30: return 9 // tab
+        case 0x31: return 32 // space
+        case 0x7C: return 1073741903 // right
+        case 0x7B: return 1073741904 // left
+        case 0x7D: return 1073741905 // down
+        case 0x7E: return 1073741906 // up
+        case 0x73: return 1073741898 // home
+        case 0x74: return 1073741899 // page up
+        case 0x77: return 1073741901 // end
+        case 0x79: return 1073741902 // page down
+        default:
+            guard let scalar = characters?.lowercased().unicodeScalars.first else { return 0 }
+            if scalar.value >= 0x01, scalar.value <= 0x1A { return Int32(scalar.value) + 0x60 }
+            return Int32(bitPattern: scalar.value)
         }
     }
 
