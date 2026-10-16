@@ -53,6 +53,14 @@ gzip -9 -f app/WebPlayground.wasm
 
 uvx --with mkdocs-material mkdocs build
 cp -R app site/editor/app
+# GitHub Pages lets browsers keep a page for 10 minutes, and Safari keeps the
+# editor page inside the playground's frame longer: each build's editor page
+# and its own files get a URL of their own. (Not the app's: nucleant-app.js
+# reads the name and the .gz from the wasm's URL.)
+VERSION=$(date +%s)
+sed -i.orig "s|src=\"../editor/\"|src=\"../editor/?v=$VERSION\"|" site/playground/index.html
+sed -i.orig -E "s/(href|src)=\"(editor\.css|layout\.js|editor\.js)\"/\1=\"\2?v=$VERSION\"/" site/editor/index.html
+rm site/playground/index.html.orig site/editor/index.html.orig
 
 if [ "$1" = "serve" ]; then
     python3 -m http.server --directory site --bind 127.0.0.1 8000

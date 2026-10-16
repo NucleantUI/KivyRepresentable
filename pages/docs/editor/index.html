@@ -9,10 +9,6 @@
 <body>
   <main class="playground">
     <section class="editors">
-      <button class="rail" id="rail" type="button" aria-controls="panes" aria-expanded="true" title="Hide the code">
-        <span class="chevron" aria-hidden="true">‹</span>
-        <span class="rail-label">app.kv · app.py</span>
-      </button>
       <div class="panes" id="panes">
         <div class="pane" data-pane="kv">
           <header>
@@ -31,6 +27,10 @@
           <div class="editor" id="py"></div>
         </div>
       </div>
+      <button class="rail" id="rail" type="button" aria-controls="panes" aria-expanded="true" title="Hide the code">
+        <span class="chevron" aria-hidden="true">‹</span>
+        <span class="rail-label">app.kv · app.py</span>
+      </button>
     </section>
     <section class="pane preview">
       <header>Kivy window <span id="status">Loading…</span></header>
