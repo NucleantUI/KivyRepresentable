@@ -8,9 +8,6 @@
 #   ./build.sh            the playground app, then the site into ./site
 #   ./build.sh serve      the same, then serves ./site
 #                         (http://127.0.0.1:8000/playground/)
-#   ./build.sh deploy     the same, then publishes ./site as the gh-pages
-#                         branch of the repo's origin (GitHub Pages serves
-#                         that branch)
 #   ./build.sh native     WebPlayground for this machine instead:
 #                         swift/.build/debug/WebPlayground
 #
@@ -52,18 +49,4 @@ cp -R app site/editor/app
 
 if [ "$1" = "serve" ]; then
     python3 -m http.server --directory site --bind 127.0.0.1 8000
-elif [ "$1" = "deploy" ]; then
-    # The site as the one commit of gh-pages. .nojekyll: Jekyll would leave
-    # out files whose names start with _ (__init__.py, …).
-    touch site/.nojekyll
-    origin=$(git remote get-url origin)
-    commit=$(git rev-parse --short HEAD)
-    published=$(mktemp -d)
-    cp -R site/. "$published"
-    git -C "$published" init -q -b gh-pages
-    git -C "$published" add -A
-    git -C "$published" commit -q -m "Site built from $commit" \
-        -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-    git -C "$published" push -f "$origin" gh-pages
-    rm -rf "$published"
 fi

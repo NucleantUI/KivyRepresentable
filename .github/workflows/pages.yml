@@ -1,5 +1,6 @@
-# Builds the docs site with the playground and publishes it as the gh-pages
-# branch (pages/build.sh deploy), which GitHub Pages serves.
+# Builds the docs site with the playground (pages/build.sh) and publishes it
+# to GitHub Pages. Pages must be set to "GitHub Actions" as the source once,
+# under Settings > Pages.
 #
 # The packages the app builds on (NucleantVulkan, NucleantUI, NucleantSkia,
 # NucleantApplication, PySwiftKit, CPython) come from GitHub, on the branches
@@ -13,7 +14,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: pages
@@ -75,11 +78,22 @@ jobs:
           CIBW_ENVIRONMENT: USE_NUI=1 USE_SDL2=0 USE_SDL3=0 USE_GSTREAMER=0 USE_PANGOFT2=0 KIVY_CROSS_PLATFORM=emscripten
         run: uvx --from cibuildwheel==4.3.1 cibuildwheel kivy2x --output-dir playground/wheelhouse
 
-      - name: Build and publish the site
+      - name: Build the site
         env:
           NUCLEANT_APPLICATION: ${{ runner.temp }}/NucleantApplication
           NUCLEANT_LOCAL_DEV: "0"
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          pages/build.sh deploy
+        run: pages/build.sh
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: pages/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
