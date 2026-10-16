@@ -34,9 +34,15 @@ fi
 
 uv pip install --python 3.13 --python-platform wasm32-pyodide2025 --find-links "$WHEELS" \
     --refresh-package kivy --refresh-package kivy-playground --target "$SITE_PACKAGES" ./python
-# The page downloads every file in it: not Kivy's examples, tests and tools,
-# nor uv's .lock (a hidden file, which GitHub Pages doesn't publish).
-rm -rf "$SITE_PACKAGES/share" "$SITE_PACKAGES/kivy/tests" "$SITE_PACKAGES/kivy/tools" "$SITE_PACKAGES/.lock"
+# The page downloads every file in it, one request each: only what runs.
+# Not Kivy's examples, tests and tools, its Cython sources, install
+# metadata and scripts, uv's .lock (a hidden file, which GitHub Pages
+# doesn't publish), nor pygments and docutils (Kivy's CodeInput and
+# RstDocument only; together half the files).
+rm -rf "$SITE_PACKAGES/share" "$SITE_PACKAGES/kivy/tests" "$SITE_PACKAGES/kivy/tools" \
+    "$SITE_PACKAGES/.lock" "$SITE_PACKAGES/bin" "$SITE_PACKAGES"/*.dist-info \
+    "$SITE_PACKAGES/pygments" "$SITE_PACKAGES/docutils"
+find "$SITE_PACKAGES" \( -name '*.pyx' -o -name '*.pxd' -o -name '*.pxi' -o -name '*.c' -o -name '*.h' \) -delete
 python3 "$NUCLEANT_APPLICATION/scripts/build_wasm_app.py" WebPlayground --package-path swift \
     --release --output app
 # Optimised by binaryen, without the names section the release build keeps
