@@ -17,7 +17,8 @@
 //      KivyWindowGroup does — then keeps the slot on the view's frame and
 //      ticks Kivy;
 //    - presses and drags on the view go to Kivy as SDL's mouse events, in
-//      the view's own points.
+//      the view's own points; a press gives the view the keys, which go to
+//      Kivy as SDL's key and text events (KivyKeyboard).
 //
 //  Kivy runs once per process — one window, one app — so there is one
 //  session, started by the first KivyAppView to appear, and every
@@ -68,6 +69,8 @@ public struct KivyAppView {
                         .onEnded { session.release(at: $0.location) }
                 )
         }
+        .focusable()
+        .onKeyPress(phases: .all) { session.keyPress($0) }
         .onAppear { session.appear(launcher: launcher, displayScale: displayScale) }
         .onDisappear { session.disappear() }
         .onChange(of: displayScale) { _, scale in session.displayScale = scale }
@@ -138,6 +141,7 @@ final class KivyAppSession {
 
     private var launcher: KivyLauncher?
     private var host: KivyHost?
+    private var keyboard: KivyKeyboard?
     private var node: KivyShaderNode<KivyRenderNode>?
     private var container: KivyRenderNode?
     private var device: KivyGLDevice?
@@ -211,6 +215,7 @@ final class KivyAppSession {
         if let node {
             container.compositeRect = SIMD4(Double(frame.x), Double(frame.y), Double(node.width), Double(node.height))
         }
+        keyboard?.readSystemKeyboard()
         host.tick(dt)
     }
 
@@ -251,11 +256,14 @@ final class KivyAppSession {
                 node?.dirty.toggle()
             }
             host.register()
+            let keyboard = KivyKeyboard { [weak host] in host?.push($0) }
+            keyboard.connectSystemKeyboard(host)
 
             self.device = device
             self.node = node
             self.container = container
             self.host = host
+            self.keyboard = keyboard
             try launcher.runModule(module)
         } catch {
             print("KivyAppView: \(error)")
@@ -288,6 +296,12 @@ final class KivyAppSession {
         } catch {
             print("KivyAppView: resizing Kivy's image failed: \(error)")
         }
+    }
+
+    // MARK: - Keys, while the view has them
+
+    func keyPress(_ press: KeyPress) -> KeyPress.Result {
+        keyboard?.press(press) ?? .ignored
     }
 
     // MARK: - Pointer, as SDL reported it: the view's points, top-left

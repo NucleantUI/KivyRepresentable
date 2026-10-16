@@ -13,7 +13,8 @@
 //      `App.run()` returns, since the host ticks Kivy from here on;
 //    - every engine frame (`onUpdate`) ticks Kivy, which draws and presents
 //      into the slot's image before the frame composites it;
-//    - presses and drags on the window go to Kivy as SDL's mouse events.
+//    - presses and drags on the window go to Kivy as SDL's mouse events,
+//      and its keys as SDL's key and text events (KivyKeyboard).
 //
 //  Only a `KivyApp` can show one: its windows render with `KivyRenderNode`.
 //
@@ -48,7 +49,7 @@ public struct KivyWindowGroup: Scene {
     public func _lowerCommands(into menuBar: MenuBar) {}
 }
 
-/// Fills the window and passes the pointer on to Kivy. Draws nothing:
+/// Fills the window and passes the pointer and the keys on to Kivy. Draws nothing:
 /// Kivy's slot covers it.
 @View
 struct KivyView {
@@ -64,6 +65,8 @@ struct KivyView {
                     .onChanged { session.drag(to: $0.location) }
                     .onEnded { session.release(at: $0.location) }
             )
+            .focusable()
+            .onKeyPress(phases: .all) { session.keyPress($0) }
             .onAppear { session.start(launcher: launcher, displayScale: displayScale) }
             .onChange(of: displayScale) { _, scale in session.displayScale = scale }
     }
@@ -76,6 +79,7 @@ final class KivySession {
     var displayScale: Double = 1
 
     private var host: KivyHost?
+    private var keyboard: KivyKeyboard?
     private var node: KivyShaderNode<KivyRenderNode>?
     private var container: KivyRenderNode?
     private var device: KivyGLDevice?
@@ -123,11 +127,14 @@ final class KivySession {
                 node?.dirty.toggle()
             }
             host.register()
+            let keyboard = KivyKeyboard { [weak host] in host?.push($0) }
+            keyboard.connectSystemKeyboard(host)
 
             self.device = device
             self.node = node
             self.container = container
             self.host = host
+            self.keyboard = keyboard
             engine.onUpdate = { [weak self] dt in
                 MainActor.assumeIsolated { self?.frame(dt) }
             }
@@ -158,6 +165,7 @@ final class KivySession {
             resizeSlot()
             host.resize(metrics())
         }
+        keyboard?.readSystemKeyboard()
         host.tick(dt)
     }
 
@@ -176,6 +184,12 @@ final class KivySession {
         } catch {
             print("KivyWindowGroup: resizing Kivy's image failed: \(error)")
         }
+    }
+
+    // MARK: - Keys, while the window has them
+
+    func keyPress(_ press: KeyPress) -> KeyPress.Result {
+        keyboard?.press(press) ?? .ignored
     }
 
     // MARK: - Pointer, as SDL reported it: window points, top-left

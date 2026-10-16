@@ -76,10 +76,14 @@ let package = Package(
         // the way NucleantSkia ships its own node — and the view that shows
         // it, built on NucleantUI as it is (NucleantUI itself is not changed).
         // NucleantSkia draws into GL textures' images, as it is.
+        // The page's on-screen keyboard, in the browser: imports from
+        // kivy-keyboard.wasm-host.mjs.
+        .target(name: "CKivyKeyboardPage"),
         .target(
             name: "KivyRepresentable",
             dependencies: [
                 "CKivyNUI",
+                "CKivyKeyboardPage",
                 .product(name: "NucleantVulkan", package: "NucleantVulkan"),
                 .product(name: "NucleantShader", package: "NucleantVulkan"),
                 .product(name: "NucleantUI", package: "NucleantUI"),
@@ -87,6 +91,10 @@ let package = Package(
                 .product(name: "PySwiftKitStatic", package: "PySwiftKit"),
                 .product(name: "CPython", package: "CPython"),
             ],
+            // The page's side of the keyboard, which the browser's page
+            // loads as a host.
+            exclude: wasm ? [] : ["kivy-keyboard.wasm-host.mjs"],
+            resources: wasm ? [.copy("kivy-keyboard.wasm-host.mjs")] : [],
             linkerSettings: wasm ? kivyNUIExports : []
         ),
         .target(
