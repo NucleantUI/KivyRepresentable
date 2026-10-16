@@ -1,0 +1,30 @@
+/* The playground page: the editor page filling everything below the header
+   (and the tabs, where Material shows them). */
+.md-content:has(.kivy-playground) .md-content__inner {
+  margin: 0;
+  padding: 0;
+}
+
+.md-content:has(.kivy-playground) .md-content__inner::before,
+.md-content:has(.kivy-playground) h1,
+body:has(.kivy-playground) .md-footer {
+  display: none;
+}
+
+.md-main__inner:has(.kivy-playground) {
+  max-width: none;
+  margin: 0;
+}
+
+.kivy-playground {
+  display: block;
+  width: 100%;
+  height: calc(100dvh - 4.8rem);
+  border: 0;
+}
+
+@media screen and (max-width: 76.2344em) {
+  .kivy-playground {
+    height: calc(100dvh - 2.4rem);
+  }
+}

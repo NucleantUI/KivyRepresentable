@@ -1,0 +1,18 @@
+[project]
+name = "kivy-playground"
+version = "0.1.0"
+description = "The Kivy app KivyRepresentable's web playground runs from its editors"
+requires-python = ">=3.13"
+dependencies = [
+    # Built with the nui backends (kivy2x, USE_NUI=1): the playground's
+    # wheelhouse (../../playground/wheelhouse).
+    "kivy==2.3.1",
+    "pillow; sys_platform != 'emscripten'",
+]
+
+[tool.uv.build-backend]
+module-name = "kivy_playground"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"

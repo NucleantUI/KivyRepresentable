@@ -75,7 +75,7 @@ from kivy.atlas import Atlas
 from kivy.resources import resource_find
 from kivy.utils import platform
 from kivy.compat import string_types
-from kivy.setupconfig import USE_SDL2
+from kivy.setupconfig import USE_SDL2, USE_NUI
 import zipfile
 from io import BytesIO
 
@@ -967,6 +967,10 @@ def load(filename):
 
 # load image loaders
 image_libs = []
+
+if USE_NUI:
+    # First: it refuses to load outside a KivyRepresentable host.
+    image_libs += [('nui', 'img_nui')]
 
 if platform in ('macosx', 'ios'):
     image_libs += [('imageio', 'img_imageio')]

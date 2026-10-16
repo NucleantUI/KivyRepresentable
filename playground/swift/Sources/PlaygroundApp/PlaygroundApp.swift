@@ -6,10 +6,12 @@ import KivyRepresentable
 /// (`PlaygroundApp showcase`).
 @main
 struct PlaygroundApp: KivyApp {
+    /// Installed by ../build.sh, bundled as the target's resource.
+    var site_packages: String {
+        Bundle.module.resourceURL!.appendingPathComponent("site_packages").path
+    }
+
     var body: some Scene {
-        KivyWindowGroup("Kivy Playground", python: .init(
-            module: CommandLine.arguments.dropFirst().first ?? "playground",
-            sitePackages: [Bundle.module.resourceURL!.appendingPathComponent("site_packages").path]
-        ))
+        KivyWindowGroup("Kivy Playground", module: CommandLine.arguments.dropFirst().first ?? "playground")
     }
 }

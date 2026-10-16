@@ -9,7 +9,7 @@
 
 #if os(Linux) || os(Android)
 extension LoadedLibraries {
-    static func platformPath(named fileName: String) -> String? { nil }
-    static func platformPath(definingSymbol symbol: String) -> String? { nil }
+    func platformPath(named fileName: String) -> String? { nil }
+    func platformPath(definingSymbol symbol: String) -> String? { nil }
 }
 #endif

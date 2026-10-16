@@ -1,0 +1,85 @@
+# Builds the docs site with the playground and publishes it as the gh-pages
+# branch (pages/build.sh deploy), which GitHub Pages serves.
+#
+# The packages the app builds on (NucleantVulkan, NucleantUI, NucleantSkia,
+# NucleantApplication, PySwiftKit, CPython) come from GitHub, on the branches
+# the manifests name.
+
+name: pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  SWIFT_VERSION: 6.3.3
+
+jobs:
+  build:
+    # NucleantApplication's build_wasm_app.py runs the wasm SDK with the
+    # matching swift.org toolchain from ~/Library/Developer/Toolchains.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache the Swift toolchain and wasm SDK
+        id: swift-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/Library/Developer/Toolchains/swift-${{ env.SWIFT_VERSION }}-RELEASE.xctoolchain
+            ~/Library/org.swift.swiftpm/swift-sdks
+          key: swift-${{ env.SWIFT_VERSION }}-wasm-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install Swift ${{ env.SWIFT_VERSION }} and its wasm SDK
+        if: steps.swift-cache.outputs.cache-hit != 'true'
+        run: |
+          release="swift-${SWIFT_VERSION}-RELEASE"
+          curl -fsSLO "https://download.swift.org/swift-${SWIFT_VERSION}-release/xcode/${release}/${release}-osx.pkg"
+          installer -pkg "${release}-osx.pkg" -target CurrentUserHomeDirectory
+          swift="$HOME/Library/Developer/Toolchains/${release}.xctoolchain/usr/bin/swift"
+          curl -fsSLO "https://download.swift.org/swift-${SWIFT_VERSION}-release/wasm-sdk/${release}/${release}_wasm.artifactbundle.tar.gz"
+          "$swift" sdk install "${release}_wasm.artifactbundle.tar.gz"
+          "$swift" sdk list
+
+      - name: binaryen (wasm-opt)
+        run: brew install binaryen
+
+      # setup-uv publishes immutable releases without a moving major tag.
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: NucleantApplication (build_wasm_app.py)
+        run: git clone --depth 1 https://github.com/NucleantUI/NucleantApplication.git "$RUNNER_TEMP/NucleantApplication"
+
+      - name: Cache Kivy's Pyodide wheel
+        id: wheel-cache
+        uses: actions/cache@v6
+        with:
+          path: playground/wheelhouse
+          key: kivy-pyodide-${{ hashFiles('kivy2x/kivy/**', 'kivy2x/setup.py', 'dependencies/CKivyNUI/include/**') }}
+
+      # As `playground/build.sh wasm kivy` builds it.
+      - name: Build Kivy's Pyodide wheel
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        env:
+          CIBW_PLATFORM: pyodide
+          CIBW_BUILD: cp313-*
+          CIBW_ENVIRONMENT: USE_NUI=1 USE_SDL2=0 USE_SDL3=0 USE_GSTREAMER=0 USE_PANGOFT2=0 KIVY_CROSS_PLATFORM=emscripten
+        run: uvx --from cibuildwheel==4.3.1 cibuildwheel kivy2x --output-dir playground/wheelhouse
+
+      - name: Build and publish the site
+        env:
+          NUCLEANT_APPLICATION: ${{ runner.temp }}/NucleantApplication
+          NUCLEANT_LOCAL_DEV: "0"
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          pages/build.sh deploy

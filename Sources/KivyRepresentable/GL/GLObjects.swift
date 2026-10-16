@@ -10,6 +10,7 @@
 //
 
 @preconcurrency import CVulkan
+import NucleantSkia
 
 /// Never reused, unlike an object's address: a cache keyed by one can't
 /// mistake a new object for a deleted one that stood at the same address.
@@ -41,6 +42,9 @@ final class GLImage {
     let aspect: VkImageAspectFlags
     let serial = makeSerial()
     var layout: VkImageLayout = VK_IMAGE_LAYOUT_UNDEFINED
+    /// Skia's surface on this image, once Skia has drawn into it
+    /// (KivyGL+Skia.swift); it lives as long as the image.
+    var skiaSurface: SkiaSurface?
 
     var isDepthStencil: Bool {
         aspect & VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT.rawValue) == 0
@@ -103,6 +107,9 @@ final class GLImage {
     /// Only once no submitted work uses it — `KivyGL` retires images until
     /// the frame that last used them has finished.
     func destroy() {
+        // Skia holds views onto the image: they go first.
+        skiaSurface?.destroy()
+        skiaSurface = nil
         vkDestroyImageView(device.device, view, nil)
         vkDestroyImage(device.device, image, nil)
         vkFreeMemory(device.device, memory, nil)

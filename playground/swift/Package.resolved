@@ -1,6 +1,15 @@
 {
-  "originHash" : "d2fe1ec8c7f607450ee97cc9afc3353b59bced42fd63a9580b643b32f2ed1764",
+  "originHash" : "56c129a9a9fe750efb89af6865ae2afd778567713dc3b3df4522f1999bbc1549",
   "pins" : [
+    {
+      "identity" : "cpython",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/py-swift/CPython",
+      "state" : {
+        "branch" : "master",
+        "revision" : "124340b86fc895fb5af06ef7174842f74a08497e"
+      }
+    },
     {
       "identity" : "pyswiftast",
       "kind" : "remoteSourceControl",
@@ -8,6 +17,15 @@
       "state" : {
         "branch" : "master",
         "revision" : "c757b0d9e7975b59d3c670fea8a99b043e2cb4ba"
+      }
+    },
+    {
+      "identity" : "pyswiftkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Py-Swift/PySwiftKit.git",
+      "state" : {
+        "branch" : "master",
+        "revision" : "9bc8f01902c73307de7be5f706dac2c65c45dc38"
       }
     },
     {

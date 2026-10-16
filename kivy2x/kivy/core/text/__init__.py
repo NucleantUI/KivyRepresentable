@@ -87,7 +87,7 @@ from kivy.core import core_select_lib
 from kivy.core.text.text_layout import layout_text, LayoutWord
 from kivy.resources import resource_find, resource_add_path
 from kivy.compat import PY2
-from kivy.setupconfig import USE_SDL2, USE_PANGOFT2
+from kivy.setupconfig import USE_SDL2, USE_PANGOFT2, USE_NUI
 from kivy.logger import Logger
 
 
@@ -442,6 +442,9 @@ class LabelBase(object):
             fdirs = ['/System/Library/Fonts']
         elif platform == 'android':
             fdirs = ['/system/fonts']
+        elif platform == 'emscripten':
+            # The browser has no system fonts: only Kivy's own, below.
+            fdirs = []
         else:
             raise Exception("Unknown platform: {}".format(platform))
 
@@ -1061,6 +1064,10 @@ class FontContextManagerBase(object):
 
 # Load the appropriate provider
 label_libs = []
+if USE_NUI:
+    # First: it refuses to load outside a KivyRepresentable host, and the
+    # next provider is tried.
+    label_libs += [('nui', 'text_nui', 'LabelNUI')]
 if USE_PANGOFT2:
     label_libs += [('pango', 'text_pango', 'LabelPango')]
 

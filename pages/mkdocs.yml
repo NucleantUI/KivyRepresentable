@@ -1,0 +1,43 @@
+site_name: KivyRepresentable
+site_description: Kivy apps inside NucleantUI — in a window of their own or as a view.
+site_url: https://nucleantui.github.io/KivyRepresentable/
+repo_url: https://github.com/NucleantUI/KivyRepresentable
+repo_name: NucleantUI/KivyRepresentable
+edit_uri: ""
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.top
+    - content.code.copy
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Playground: playground.md

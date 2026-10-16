@@ -36,8 +36,9 @@ public struct KivyNUILibrary: @unchecked Sendable {
     /// one of them (`kivy.graphics.ngl_backend.ngl_nui`). Whichever file
     /// their rpath found, the host registers with that one.
     public static func loadedByKivy() throws -> KivyNUILibrary {
+        if let linked = linkedIntoTheApp() { return linked }
         for name in ["libCKivyNUI.dylib", "libCKivyNUI.so"] {
-            if let path = LoadedLibraries.path(named: name) { return try load(path: path) }
+            if let path = LoadedLibraries().path(named: name) { return try load(path: path) }
         }
         throw LoadError.notLoaded
     }
@@ -51,19 +52,6 @@ public struct KivyNUILibrary: @unchecked Sendable {
         #else
         let fallback = "libCKivyNUI.so"
         #endif
-        let name = path ?? environment ?? fallback
-        guard let handle = dlopen(name, RTLD_NOW | RTLD_GLOBAL) else {
-            throw LoadError.open(String(cString: dlerror()))
-        }
-        func symbol<T>(_ name: String, as type: T.Type) throws -> T {
-            guard let pointer = dlsym(handle, name) else { throw LoadError.missing(name) }
-            return unsafeBitCast(pointer, to: type)
-        }
-        return KivyNUILibrary(
-            setHost: try symbol("kivy_nui_set_host", as: (@convention(c) (UnsafePointer<KivyNUIHost>?) -> Void).self),
-            pushEvent: try symbol("kivy_nui_push_event", as: (@convention(c) (UnsafePointer<KivyNUIEvent>?) -> Void).self),
-            tick: try symbol("kivy_nui_tick", as: (@convention(c) (Double) -> Void).self),
-            isHosted: try symbol("kivy_nui_is_hosted", as: (@convention(c) () -> Bool).self)
-        )
+        return try open(path ?? environment ?? fallback)
     }
 }

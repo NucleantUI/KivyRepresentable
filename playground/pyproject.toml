@@ -10,8 +10,9 @@ requires-python = ">=3.13"
 dependencies = [
     # Built with the nui backends (kivy2x, USE_NUI=1), from ./wheelhouse.
     "kivy==2.3.1",
-    # Kivy's text provider without SDL.
-    "pillow",
+    # Kivy's text provider without SDL. Not in the browser (no Pyodide
+    # wheel on PyPI), where the nui providers draw text and images.
+    "pillow; sys_platform != 'emscripten'",
 ]
 
 [tool.uv]

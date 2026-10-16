@@ -132,6 +132,21 @@ registers; every member forwards to `KivyGL.current` (Kivy has one context).
   selection, not 0: Vulkan picks min vs mag filter after the clamp, so a cap
   of 0 always magnifies and GL_NEAREST minification came out linear. 0.25
   still minifies and rounds to level 0 (ANGLE's choice).
+- Skia into textures (`KivyGL+Skia.swift`): `gl.drawWithSkia(texture:)`
+  wraps a GL texture's own VkImage as a NucleantSkia `SkiaSurface` (kept on
+  the image, dropped before it) and hands the `SkCanvas` over: Skia draws
+  straight into what Kivy samples, no CPU pixels, NucleantSkia unchanged.
+  The Ganesh context is made on first use, on the GL's device and queue
+  (the engine's `makeSkiaContext`, or one over the headless instance). Kivy's
+  recorded work is submitted first; Skia flushes to COLOR_ATTACHMENT and the
+  frame's own barrier takes it from there. The canvas is the texture's rows
+  first row at the top, as Kivy's image data: a texture Kivy flips
+  (`flip_vertical`) shows it upright. Single-level textures only (Skia wraps
+  one level). Kivy redraws only when asked, so after drawing the canvas
+  showing the texture needs `ask_update()`. `fillWithSkia` draws a whole
+  texture anew from transparent (the providers): storage made at the given
+  size if Kivy hasn't made it yet, a mipmapped texture remade with one
+  level for Skia and its mipmaps made again after (`makeMipmaps(of:)`).
 - Not done (left nil in the table): compressed textures, glCopyTex*,
   glShaderBinary; cube maps; client-side vertex/index arrays (Kivy always
   uses buffers).
@@ -144,27 +159,51 @@ registers; every member forwards to `KivyGL.current` (Kivy has one context).
   `libCKivyNUI` — never the copy compiled into this module: Kivy's
   extensions link the dylib, and a host registered with a different copy is
   one Kivy never sees.
+- `KivyProviders` (owned by the host): what the `nui` text and image
+  providers call through the host table (`text_extents`, `font_metrics`,
+  `draw_text`, `image_size`, `draw_image`, `image_pixels`): typefaces by
+  font file, SkFont from Kivy's options, runs drawn into the texture with
+  `KivyGL.fillWithSkia`; images decoded by SkCodec, or parsed as SVG
+  (`SkSVGDOM`) when no codec reads them, and drawn there.
 - `libKivyNUIHeadless` (product `KivyNUIHeadless`): a windowless host on its
   own Vulkan device, for a process that already runs Python;
-  `kivy_nui_headless_start/read/stop`.
+  `kivy_nui_headless_start/read/stop`, and
+  `kivy_nui_headless_skia_pattern` (Skia draws a known picture into a Kivy
+  texture, for the render test).
 
-## In an app — `KivyApp`, `KivyWindowGroup`, `KivyPython`
+## In an app — `KivyApp`, `KivyWindowGroup`, `KivyLauncher`
 
     @main
     struct MyApp: KivyApp {
+        var site_packages: String { Bundle.module.resourceURL!.appendingPathComponent("site_packages").path }
+
         var body: some Scene {
-            KivyWindowGroup("Kivy", python: .init(module: "myapp", sitePackages: [...]))
+            KivyWindowGroup("Kivy", module: "myapp")
         }
     }
 
-- `KivyWindowGroup` makes an ordinary `HostingWindow<KivyRenderNode>`; its
+- Python belongs to the app, launched once: `KivyApp.main()` (wins over
+  `NucleantApp.main()` for a `KivyApp`) makes the app, launches
+  `KivyLauncher(sitePackages: [app.site_packages])` — `preLaunch` →
+  `initPython` → `onLaunch` (releases the GIL) — then runs that same app
+  through NucleantUI's public `AppRuntime` (`setup`, `run`), as
+  `NucleantApp.main()` does. NucleantUI knows nothing of Python. The
+  launcher reaches the window's view as `@Environment(\.kivyLauncher)` (in
+  `KivyView`; the key's default is the one `main` launched, outside a
+  `KivyApp` one with `isLaunched == false`).
+- `KivyWindowGroup(title, module:)` only picks the module. No window
+  singleton: each group has its own session, window, slot and host. Its
   root `KivyView` draws nothing, forwards press/drag/release as SDL mouse
   events (`DragGesture(minimumDistance: 0)`) and, on appear, starts the
   session: adds a `.kivy` slot to the window's engine (public
-  `renderEngine`), starts Python, imports `kivy.graphics.ngl_backend.ngl_nui`
-  (which loads the libCKivyNUI Kivy links), registers the host with *that*
-  library (`KivyNUILibrary.loadedByKivy()`), then runs the module with
-  `runpy` as `__main__`. `App.run()` returns; the GIL is released.
+  `renderEngine`), imports `kivy.graphics.ngl_backend.ngl_nui` in the app's
+  Python (which loads the libCKivyNUI Kivy links), registers the host with
+  *that* library (`KivyNUILibrary.loadedByKivy()`), then runs the module
+  with `runpy` as `__main__` (`launcher.runModule`, taking the GIL for the
+  call). `App.run()` returns.
+- NucleantUI's `EnvironmentValues` returns nil for an optional key with a
+  non-nil default (`storage[key] as? Value?` of a missing entry is
+  `.some(nil)`), so `kivyLauncher` is non-optional.
 - Ticking: the engine's `onUpdate` (start of every `drawFrame`) ticks Kivy,
   which presents into the slot before the frame composites it. The `.kivy`
   slot keeps `needsRender` set, so the engine draws every display frame.
@@ -172,15 +211,22 @@ registers; every member forwards to `KivyGL.current` (Kivy has one context).
   image is replaced (`invalidateComposite`, old one freed after in-flight
   frames), framebuffer 0 resized, Kivy told WINDOW_RESIZED. Points come from
   `@Environment(\.displayScale)`.
-- `KivyPython`: PythonLauncher's isolated init — home = the prefix of the
+- `KivyLauncher`: a class shaped as kivy-school/KivyLauncher (its code,
+  not the package): `env` (its `Environment`, env vars by name),
+  `preLaunch` → `initPython` → `onLaunch`, then `runModule` per window.
+  PythonLauncher's isolated init — home = the prefix of the
   linked Python (found through `dladdr`, LoadedLibraries+Apple.swift),
   stdlib + lib-dynload on the path, `site_import = 0` (python.org's own
   site-packages can hold another Kivy), then `site.addsitedir` per
   `sitePackages`. Sets `KIVY_WINDOW=nui`, `KIVY_GL_BACKEND=nui`,
-  `KIVY_NO_ARGS=1` unless given.
+  `KIVY_NO_ARGS=1` unless already set (`launcher.env.X = …` before launch).
 - Python comes from PySwiftKit's CPython package (local checkouts in
   Package.swift), normal mode: python.org's Python.framework 3.13. What
   links it needs `-F/Library/Frameworks` (tests, headless lib, the app).
+- `img_nui` is ignored in the app: Kivy picks image providers at
+  `import kivy`, which the `ngl_nui` import does before the host registers
+  (`kivy_nui_has_text_and_images()` is still false then). Text is picked
+  later and gets `nui`.
 - Not yet: pointer motion without a button (NucleantUI views only see the
   pointer during a drag — Kivy's hover needs plain motion events), scroll,
   keyboard, window title from Kivy (`HostingWindow.title` is internal).
@@ -292,10 +338,34 @@ Changed in Kivy (originals of replaced functions kept under a `_` name):
   polyline stays for an explicit `segments`, a closed arc with joints other
   than round (or center-connected without round caps), and a RenderContext
   with its own shader.
+- `kivy/lib/kivy_nui.py`: ctypes on `kivy_nui.h`'s text and image calls
+  (no Cython). Opens the shared library through `ngl_nui`'s file without
+  importing it (a lookup on that handle searches its dependencies, so it is
+  the library the host registered with); ImportError unless
+  `kivy_nui_has_text_and_images()`, so providers fall through.
+- `kivy/core/text/text_nui.py`: `LabelNUI`. `get_extents` / ascent /
+  descent from the host; `_render_text` collects runs, `_render_end` has the
+  host clear the label's texture and draw them (Skia, straight into its
+  image) and returns a 1x1 ImageData, which `_render_real` doesn't blit.
+  Laid out as the SDL2 provider: line box from (x, y), baseline an ascent
+  down, outline grows extents by its width each side, descent negative.
+  Font file, size, hinting, blended, underline, strikethrough, outline,
+  colors; no kerning (Skia's simple text isn't shaped).
+- `kivy/core/image/img_nui.py`: `ImageLoaderNUI` (png, jpg, webp, bmp, ico,
+  wbmp, and svg through NucleantSkia's `SkSVGDOM`, sized by the root's
+  width/height or else its viewBox, as SDL_image did; GIF stays with
+  loaders that read every frame). `load` reads the
+  file's bytes (or `rawdata`) and asks the host for the size; `populate`
+  makes the texture with a fill callback, as a label's, and the host
+  decodes and draws into it when Kivy first binds it. With `keep_data` the
+  host decodes to bytes instead and Kivy uploads them as usual.
 - One-word additions: `'nui'` in `kivy_options['window']`
   (`kivy/__init__.py`), the recognized backends in `cgl_init`
   (`graphics/cgl.pyx`), and `('nui', 'window_nui', 'WindowNUI')` first in
-  `window_impl` when `USE_NUI` (`core/window/__init__.py`).
+  `window_impl` when `USE_NUI` (`core/window/__init__.py`); `'nui'` first
+  in `kivy_options['text']` / `['image']` and in `label_libs` /
+  `image_libs` when `USE_NUI` (`core/text/__init__.py`,
+  `core/image/__init__.py`).
 - `setup.py`: `c_options['use_nui']` (`USE_NUI=1`), `determine_nui_flags()`
   (`KIVY_NUI_INCLUDE_DIR` / `KIVY_NUI_LIB_DIR`, default: this package's
   `dependencies/CKivyNUI/include` and `.build/debug`), and the two
@@ -320,7 +390,8 @@ Build (Python 3.13, uv):
   now. Bundling the dylib (cibuildwheel/delocate) is for later — the host
   then has to `dlopen` that copy (`KivyNUILibrary.load(path:)`).
 
-Tests (Python 3.13 with Pillow for the PIL text provider; against the
+Tests (Python 3.13 with Pillow, which the tests use to write images and
+save frames; against the
 kivy2x checkout, or with `KIVY_NUI_INSTALLED=1` against the Kivy installed in
 that Python, e.g. the wheel in a `uv venv`):
 - `python Tests/kivy/test_window_nui.py`: plays the host through ctypes: an
@@ -329,7 +400,8 @@ that Python, e.g. the wheel in a `uv venv`):
   Uses Kivy's `mock` GL.
 - `python Tests/kivy/test_render_nui.py [word ...]`: real Kivy apps on the
   Vulkan GL through `libKivyNUIHeadless`, one per group of `progress.md`
-  (canvas, shader circles, shader rings and flat ellipses, widgets,
+  (canvas, shader circles, shader rings and flat ellipses, Skia drawing
+  into a Kivy texture, the nui text and image providers, widgets,
   stencil/fbo, the showcase, transforms/state/callbacks,
   vertex instructions and mesh modes, lines, smooth shapes/tesselator/box
   shadow/svg, scissor/textures, 3D depth and Kivy's monkey example); frames
@@ -342,8 +414,10 @@ that Python, e.g. the wheel in a `uv venv`):
 Run (set by the host before starting Python): `KIVY_WINDOW=nui`,
 `KIVY_GL_BACKEND=nui`.
 
-Not done yet: text provider (without SDL Kivy falls back to PIL if
-installed), clipboard, image via SDL (macOS has `imageio`).
+Text and images: the `nui` providers below (Skia in the host). Outside a
+host that draws them Kivy falls back to PIL / `imageio` as before.
+
+Not done yet: clipboard.
 
 ## Where things live in `kivy2x`
 
@@ -362,8 +436,8 @@ installed), clipboard, image via SDL (macOS has `imageio`).
 From a grep for `sdl2`/`SDL` — each needs a `_nui` provider or must not be
 selected:
 
-- text: `text_sdl2.py`, `_text_sdl2.pyx` → Skia-backed text provider
-- image: `img_sdl2.py`, `_img_sdl2.pyx`
+- text: `text_sdl2.py`, `_text_sdl2.pyx` → `text_nui.py` (done)
+- image: `img_sdl2.py`, `_img_sdl2.pyx` → `img_nui.py` (done, SVG too)
 - clipboard: `clipboard_sdl2.py`, `_clipboard_sdl2.pyx`
 - audio / video: ignored for now (per plan)
 - provider selection / config: `kivy/__init__.py`, `kivy/config.py`,
@@ -398,3 +472,10 @@ selected:
   antialiased edge, arcs); derivatives in the GL.
 - 2026-10-15: Line circle/ellipse drawn by a ring shader (caps, closing,
   dashes, SmoothLine).
+- 2026-10-15: Skia draws into Kivy textures through their shared VkImage
+  (`KivyGL.drawWithSkia`); NucleantSkia a dependency, unchanged.
+- 2026-10-15: `nui` text and image providers: the host measures text and
+  draws text and images with Skia into Kivy's textures (`text_nui.py`,
+  `img_nui.py`, `kivy_nui.py` over ctypes); Kivy's widgets unchanged.
+- 2026-10-16: SVG images (`Image(source='x.svg')`) through NucleantSkia's
+  new `SkSVGDOM`.

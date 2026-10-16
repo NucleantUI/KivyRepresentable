@@ -10,6 +10,7 @@
 import Foundation
 @preconcurrency import CVulkan
 import NucleantVulkan
+import NucleantSkia
 
 public enum KivyGLError: Error {
     case instance(Int32)
@@ -21,6 +22,7 @@ public enum KivyGLError: Error {
     case image
     case memory
     case buffer
+    case engineGone
 }
 
 public final class KivyGLDevice: @unchecked Sendable {
@@ -39,6 +41,11 @@ public final class KivyGLDevice: @unchecked Sendable {
     /// Set only for a headless device, which this object made and destroys.
     private let ownedInstance: VkInstance?
 
+    /// A Ganesh context on this device and queue, for Skia drawing into GL
+    /// textures: the engine's own `makeSkiaContext`, or one over the
+    /// headless instance with the extensions it was made with.
+    let makeSkiaContext: () throws -> SkiaVulkanContext
+
     /// On the host engine's device and queue.
     public convenience init<N>(engine: VulkanRenderEngine<N>) throws {
         try self.init(
@@ -46,7 +53,11 @@ public final class KivyGLDevice: @unchecked Sendable {
             physicalDevice: engine.physicalDevice,
             device: engine.device,
             queue: engine.graphicsQueue,
-            queueFamilyIndex: engine.queueFamilyIndex
+            queueFamilyIndex: engine.queueFamilyIndex,
+            makeSkiaContext: { [weak engine] in
+                guard let engine else { throw KivyGLError.engineGone }
+                return try engine.makeSkiaContext()
+            }
         )
     }
 
@@ -55,9 +66,11 @@ public final class KivyGLDevice: @unchecked Sendable {
         physicalDevice: VkPhysicalDevice,
         device: VkDevice,
         queue: VkQueue,
-        queueFamilyIndex: UInt32
+        queueFamilyIndex: UInt32,
+        makeSkiaContext: @escaping () throws -> SkiaVulkanContext
     ) throws {
         self.ownedInstance = instance
+        self.makeSkiaContext = makeSkiaContext
         self.physicalDevice = physicalDevice
         self.device = device
         self.queue = queue
@@ -197,7 +210,18 @@ public final class KivyGLDevice: @unchecked Sendable {
             physicalDevice: gpu,
             device: device,
             queue: queue,
-            queueFamilyIndex: UInt32(family)
+            queueFamilyIndex: UInt32(family),
+            makeSkiaContext: {
+                try SkiaVulkanContext(
+                    instance: instance,
+                    physicalDevice: gpu,
+                    device: device,
+                    queue: queue,
+                    queueFamilyIndex: UInt32(family),
+                    instanceExtensions: extensions,
+                    deviceExtensions: deviceExtensions
+                )
+            }
         )
     }
 

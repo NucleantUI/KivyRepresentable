@@ -7,9 +7,10 @@
 //  engine, on top of the (empty) view tree's canvas:
 //
 //    - when the window's content first appears, the session adds the slot,
-//      starts Python, registers the host with the libCKivyNUI Kivy loaded,
-//      and runs the app's module as `__main__` — `App.run()` returns, since
-//      the host ticks Kivy from here on;
+//      registers the host with the libCKivyNUI Kivy loaded, and runs the
+//      window's module as `__main__` in the app's Python
+//      (`@Environment(\.kivyLauncher)`, started by `KivyApp` at launch) —
+//      `App.run()` returns, since the host ticks Kivy from here on;
 //    - every engine frame (`onUpdate`) ticks Kivy, which draws and presents
 //      into the slot's image before the frame composites it;
 //    - presses and drags on the window go to Kivy as SDL's mouse events.
@@ -27,11 +28,10 @@ public struct KivyWindowGroup: Scene {
     let title: String
     let session: KivySession
 
-    /// `python.module` runs as `__main__`; Kivy and the app must be in
-    /// `python.sitePackages`.
-    public init(_ title: String = "Kivy", python: KivyPython.Configuration) {
+    /// A window running the Python module `module` as `__main__`.
+    public init(_ title: String = "Kivy", module: String) {
         self.title = title
-        self.session = KivySession(python: python)
+        self.session = KivySession(module: module)
     }
 
     public var body: Never { fatalError("KivyWindowGroup is a primitive scene") }
@@ -54,6 +54,7 @@ public struct KivyWindowGroup: Scene {
 struct KivyView {
     let session: KivySession
     @Environment(\.displayScale) var displayScale
+    @Environment(\.kivyLauncher) var launcher
 
     var body: some View {
         Color.clear
@@ -63,14 +64,14 @@ struct KivyView {
                     .onChanged { session.drag(to: $0.location) }
                     .onEnded { session.release(at: $0.location) }
             )
-            .onAppear { session.start(displayScale: displayScale) }
+            .onAppear { session.start(launcher: launcher, displayScale: displayScale) }
             .onChange(of: displayScale) { _, scale in session.displayScale = scale }
     }
 }
 
 @MainActor
 final class KivySession {
-    let python: KivyPython.Configuration
+    let module: String
     weak var window: HostingWindow<KivyRenderNode>?
     var displayScale: Double = 1
 
@@ -81,12 +82,16 @@ final class KivySession {
     private var pixelSize = (width: 0, height: 0)
     private var pressed = false
 
-    init(python: KivyPython.Configuration) {
-        self.python = python
+    init(module: String) {
+        self.module = module
     }
 
-    func start(displayScale: Double) {
+    func start(launcher: KivyLauncher, displayScale: Double) {
         guard host == nil, let window, let engine = window.renderEngine else { return }
+        guard launcher.isLaunched else {
+            print("KivyWindowGroup: no Python; a KivyApp starts it at launch")
+            return
+        }
         self.displayScale = displayScale > 0 ? displayScale : 1
         pixelSize = (max(1, window.win_rect.z), max(1, window.win_rect.w))
         do {
@@ -96,11 +101,19 @@ final class KivySession {
             container.observeContext()
             engine.append(container)
 
-            // Kivy's nui modules load the libCKivyNUI the host must register
-            // with, so Python comes first, then the host, then the app.
-            try KivyPython.initialize(python)
-            try KivyPython.importModule("kivy.graphics.ngl_backend.ngl_nui")
-            let host = KivyHost(library: try KivyNUILibrary.loadedByKivy(), device: device, metrics: metrics())
+            // The host registers with the C api Kivy's nui modules use. Where
+            // the app has it compiled in (the browser), before Kivy is
+            // imported at all — so Kivy's text and image providers, picked at
+            // its first import, see a host. Where it is libCKivyNUI, Kivy's
+            // modules load it, so they come first.
+            let library: KivyNUILibrary
+            if let linked = KivyNUILibrary.linkedIntoTheApp() {
+                library = linked
+            } else {
+                try launcher.importModule("kivy.graphics.ngl_backend.ngl_nui")
+                library = try KivyNUILibrary.loadedByKivy()
+            }
+            let host = KivyHost(library: library, device: device, metrics: metrics())
             host.onContextCreated = { [weak node] gl in
                 guard let node else { return }
                 gl.presentTarget = (node.image, Int(node.width), Int(node.height), VK_IMAGE_LAYOUT_UNDEFINED)
@@ -118,7 +131,7 @@ final class KivySession {
             engine.onUpdate = { [weak self] dt in
                 MainActor.assumeIsolated { self?.frame(dt) }
             }
-            try KivyPython.runMain(python)
+            try launcher.runModule(module)
         } catch {
             print("KivyWindowGroup: \(error)")
         }

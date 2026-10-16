@@ -173,6 +173,37 @@ typedef enum KivyNUICursor {
     KIVY_NUI_CURSOR_HAND,
 } KivyNUICursor;
 
+/* MARK: - Text and images */
+
+/* A font as Kivy's text providers use it: its file and the label options
+   that change how it is measured and drawn. */
+typedef struct KivyNUIFont {
+    /* The font file (Kivy's resolved `font_name_r`), UTF-8. */
+    const char *path;
+    /* Pixels. */
+    float size;
+    /* `font_hinting`: 0 none, 1 light, 2 normal, 3 mono. */
+    int32_t hinting;
+    /* `font_blended`: antialiased glyphs. */
+    bool antialias;
+    bool underline;
+    bool strikethrough;
+    /* `outline_width` in pixels, 0 for none. It grows the extents by twice
+       its width, as Kivy's SDL2 provider does. */
+    float outline_width;
+} KivyNUIFont;
+
+/* One `_render_text` call: `utf8` at (x, y), the top-left of its line box,
+   in texture pixels with the first row at the top (Kivy's label textures
+   are flipped, as its image data is). */
+typedef struct KivyNUITextRun {
+    const char *utf8;
+    float x, y;
+    float color[4];
+    float outline_color[4];
+    KivyNUIFont font;
+} KivyNUITextRun;
+
 /* MARK: - Host side (registered by KivyRepresentable) */
 
 typedef struct KivyNUIHost {
@@ -200,6 +231,31 @@ typedef struct KivyNUIHost {
     void (*hide_keyboard)(void *context);
     /* Kivy asked to close (App.stop / Window.close). */
     void (*request_close)(void *context);
+
+    /* Text and images, drawn by the host straight into a texture's image
+       (texture = the GL name Kivy got from glGenTextures). Kivy's canvas
+       then draws the texture as it draws any other. */
+    /* Size of `utf8` in `font`: advance width, ascent + descent. */
+    bool (*text_extents)(void *context, const KivyNUIFont *font, const char *utf8,
+                         int32_t *width, int32_t *height);
+    /* Pixels above and below the baseline, both positive. */
+    bool (*font_metrics)(void *context, const KivyNUIFont *font,
+                         int32_t *ascent, int32_t *descent);
+    /* Clears `texture` and draws `runs` into it. A texture with no storage
+       yet gets it at width x height. */
+    bool (*draw_text)(void *context, uint32_t texture, int32_t width, int32_t height,
+                      const KivyNUITextRun *runs, int32_t count);
+    /* Size of the encoded image (PNG, JPEG, WebP, ...) in `data`. */
+    bool (*image_size)(void *context, const void *data, size_t size,
+                       int32_t *width, int32_t *height);
+    /* Decodes `data` and draws it into `texture` at its top-left, the rest
+       cleared. A texture with no storage yet gets it at width x height. */
+    bool (*draw_image)(void *context, uint32_t texture, int32_t width, int32_t height,
+                       const void *data, size_t size);
+    /* Decodes `data` into `out`: width * height * 4 bytes, RGBA, straight
+       alpha, first row at the top — for an image Kivy keeps the pixels of. */
+    bool (*image_pixels)(void *context, const void *data, size_t size,
+                         uint8_t *out, size_t out_size);
 } KivyNUIHost;
 
 /* Registers the host. Called once, before Python is started. The table is
@@ -242,6 +298,23 @@ KIVY_NUI_API void kivy_nui_set_cursor_visible(bool visible);
 KIVY_NUI_API void kivy_nui_show_keyboard(void);
 KIVY_NUI_API void kivy_nui_hide_keyboard(void);
 KIVY_NUI_API void kivy_nui_request_close(void);
+
+/* Text and images (see `KivyNUIHost`). False without a host. */
+/* True when the registered host draws text and images (all of the calls
+   below), which is when Kivy's `nui` text and image providers load. */
+KIVY_NUI_API bool kivy_nui_has_text_and_images(void);
+KIVY_NUI_API bool kivy_nui_text_extents(const KivyNUIFont *font, const char *utf8,
+                                        int32_t *width, int32_t *height);
+KIVY_NUI_API bool kivy_nui_font_metrics(const KivyNUIFont *font,
+                                        int32_t *ascent, int32_t *descent);
+KIVY_NUI_API bool kivy_nui_draw_text(uint32_t texture, int32_t width, int32_t height,
+                                     const KivyNUITextRun *runs, int32_t count);
+KIVY_NUI_API bool kivy_nui_image_size(const void *data, size_t size,
+                                      int32_t *width, int32_t *height);
+KIVY_NUI_API bool kivy_nui_draw_image(uint32_t texture, int32_t width, int32_t height,
+                                      const void *data, size_t size);
+KIVY_NUI_API bool kivy_nui_image_pixels(const void *data, size_t size,
+                                        uint8_t *out, size_t out_size);
 
 /* Takes the oldest queued event into `out`. False when the queue is empty,
    the way SDL_PollEvent returns 0. */

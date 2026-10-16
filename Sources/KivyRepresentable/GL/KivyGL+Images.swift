@@ -117,7 +117,14 @@ extension KivyGL {
 
     func generateMipmap(_ target: GLenum) {
         guard target == GL.texture2D else { return setError(GL.invalidEnum) }
-        guard let texture = boundTexture, let source = texture.image else { return setError(GL.invalidOperation) }
+        guard let texture = boundTexture, texture.image != nil else { return setError(GL.invalidOperation) }
+        makeMipmaps(of: texture)
+    }
+
+    /// The texture's full chain from its level 0, in a new image when it
+    /// doesn't have one yet.
+    func makeMipmaps(of texture: GLTexture) {
+        guard let source = texture.image else { return }
         var levels = 1
         while max(source.width, source.height) >> levels > 0 { levels += 1 }
         guard levels > 1 else { return }

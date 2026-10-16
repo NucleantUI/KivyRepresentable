@@ -3,7 +3,7 @@
 # window (core/window/_window_nui.pyx) and cgl backend
 # (graphics/cgl_backend/cgl_nui.pyx). Included like lib/sdl2.pxi.
 
-from libc.stdint cimport int32_t, int64_t, uint8_t, uint16_t
+from libc.stdint cimport int32_t, int64_t, uint8_t, uint16_t, uint32_t
 
 cdef extern from "kivy_nui.h" nogil:
 
@@ -256,3 +256,29 @@ cdef extern from "kivy_nui.h" nogil:
     void kivy_nui_request_close()
 
     bint kivy_nui_poll_event(KivyNUIEvent *out)
+
+    # Text and images, for the `nui` text and image providers (lib/_kivy_nui.pyx).
+    ctypedef struct KivyNUIFont:
+        const char *path
+        float size
+        int32_t hinting
+        bint antialias
+        bint underline
+        bint strikethrough
+        float outline_width
+
+    ctypedef struct KivyNUITextRun:
+        const char *utf8
+        float x
+        float y
+        float color[4]
+        float outline_color[4]
+        KivyNUIFont font
+
+    bint kivy_nui_has_text_and_images()
+    bint kivy_nui_text_extents(const KivyNUIFont *font, const char *utf8, int32_t *width, int32_t *height)
+    bint kivy_nui_font_metrics(const KivyNUIFont *font, int32_t *ascent, int32_t *descent)
+    bint kivy_nui_draw_text(uint32_t texture, int32_t width, int32_t height, const KivyNUITextRun *runs, int32_t count)
+    bint kivy_nui_image_size(const void *data, size_t size, int32_t *width, int32_t *height)
+    bint kivy_nui_draw_image(uint32_t texture, int32_t width, int32_t height, const void *data, size_t size)
+    bint kivy_nui_image_pixels(const void *data, size_t size, uint8_t *out, size_t out_size)

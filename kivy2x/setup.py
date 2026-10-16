@@ -979,6 +979,14 @@ def determine_nui_flags():
     default_lib_dir = join(package_root, '.build', 'debug')
     include_dir = environ.get('KIVY_NUI_INCLUDE_DIR', default_include_dir)
     lib_dir = environ.get('KIVY_NUI_LIB_DIR', default_lib_dir)
+    if platform == 'emscripten':
+        # One module in the browser: the app has the C api compiled in and
+        # exports it; these modules leave it undefined, and Python resolves
+        # it from the app when it loads them.
+        return {
+            'include_dirs': [include_dir],
+            'depends': ['lib/kivy_nui.pxi'],
+        }
     return {
         'include_dirs': [include_dir],
         'library_dirs': [lib_dir],
@@ -1057,6 +1065,10 @@ def determine_gl_flags():
                 'for rpi platform, falling back to EGL and GLESv2.')
             gl_libs = ['EGL', 'GLESv2']
         flags['libraries'] = ['bcm_host'] + gl_libs
+    elif platform == 'emscripten':
+        # Pyodide: GL is in the module Python runs in, as everything an
+        # extension module uses; nothing is linked.
+        flags['libraries'] = []
     elif platform in ['mali', 'vc']:
         flags['include_dirs'] = ['/usr/include/']
         flags['library_dirs'] = ['/usr/lib/arm-linux-gnueabihf']
@@ -1302,6 +1314,8 @@ if c_options['use_nui']:
         base_flags, gl_flags_base, nui_flags)
     sources['graphics/ngl_backend/ngl_nui.pyx'] = merge(base_flags, nui_flags)
     sources['core/window/_window_nui.pyx'] = merge(base_flags, nui_flags)
+    # The text and image calls of kivy.lib.kivy_nui.
+    sources['lib/_kivy_nui.pyx'] = merge(base_flags, nui_flags)
 
 if c_options["use_sdl2"]:
     sdl2_flags = determine_sdl2()

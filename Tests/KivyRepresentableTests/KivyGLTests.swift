@@ -1,6 +1,8 @@
+import Foundation
 import Testing
 import CKivyNUI
 import CVulkan
+import NucleantSkia
 @testable import KivyRepresentable
 
 /// Kivy's own shaders, as `shader.pyx` hands them over: header.vs/.fs
@@ -492,5 +494,295 @@ struct KivyGLTests {
         let pixels = kivy.read()
         #expect(kivy.pixel(pixels, x: 16, y: 16) == red)
         #expect(kivy.error == GL.noError)
+    }
+
+    // MARK: - Skia into textures
+
+    /// Skia draws into the texture's own image; Kivy samples it as it does
+    /// any texture. Skia's first row is the texture's row 0, which Kivy's
+    /// unflipped texture coordinates put at the bottom.
+    @Test func skiaDrawsIntoAKivyTextureThatKivyThenSamples() throws {
+        let kivy = try KivyLikeClient()
+        kivy.clear(SIMD4(0, 0, 0, 1))
+        let program = kivy.kivyProgram()
+        kivy.setupProjection(program)
+        let name = kivy.texture(width: 64, height: 64, pixels: [UInt8](repeating: 255, count: 64 * 64 * 4))
+        try kivy.gl.drawWithSkia(texture: name) { canvas in
+            canvas.clear(SIMD4<Float>(1, 0, 0, 1))
+            canvas.drawRect(x: 0, y: 0, w: 64, h: 16, paint: SkPaint(color: SIMD4(0, 0, 1, 1)))
+        }
+        kivy.rectangle(program, x: 0, y: 0, width: 64, height: 64)
+        let pixels = kivy.read()
+        #expect(kivy.error == GL.noError)
+        #expect(kivy.pixel(pixels, x: 32, y: 8) == blue)
+        #expect(kivy.pixel(pixels, x: 32, y: 40) == red)
+    }
+
+    /// Skia draws over what Kivy uploaded, Kivy uploads over what Skia drew,
+    /// and Skia draws again on the same surface: each keeps the other's
+    /// pixels outside what it touched.
+    @Test func skiaAndKivyUploadsDrawOverEachOther() throws {
+        let kivy = try KivyLikeClient()
+        kivy.clear(SIMD4(0, 0, 0, 1))
+        let program = kivy.kivyProgram()
+        kivy.setupProjection(program)
+        let greenPixels: [UInt8] = (0..<64 * 64).flatMap { _ in [0, 255, 0, 255] as [UInt8] }
+        let name = kivy.texture(width: 64, height: 64, pixels: greenPixels)
+        try kivy.gl.drawWithSkia(texture: name) { canvas in
+            canvas.drawRect(x: 0, y: 0, w: 32, h: 64, paint: SkPaint(color: SIMD4(1, 0, 0, 1)))
+        }
+        let bluePixels: [UInt8] = (0..<16 * 16).flatMap { _ in [0, 0, 255, 255] as [UInt8] }
+        kivy.t.glTexSubImage2D!(GL.texture2D, 0, 48, 0, 16, 16, GL.rgba, GL.unsignedByte, bluePixels)
+        try kivy.gl.drawWithSkia(texture: name) { canvas in
+            canvas.drawRect(x: 0, y: 48, w: 16, h: 16, paint: SkPaint(color: SIMD4(1, 1, 1, 1)))
+        }
+        kivy.rectangle(program, x: 0, y: 0, width: 64, height: 64)
+        let pixels = kivy.read()
+        #expect(kivy.error == GL.noError)
+        #expect(kivy.pixel(pixels, x: 24, y: 40) == red)
+        #expect(kivy.pixel(pixels, x: 40, y: 40) == green)
+        #expect(kivy.pixel(pixels, x: 56, y: 8) == blue)
+        #expect(kivy.pixel(pixels, x: 8, y: 56) == white)
+        #expect(kivy.pixel(pixels, x: 24, y: 56) == red)
+    }
+
+    /// The texture of a Kivy Fbo: Kivy renders into it, Skia draws over that
+    /// before the frame is submitted, then Kivy renders into it again.
+    @Test func skiaDrawsBetweenKivysPassesIntoAnFboTexture() throws {
+        let kivy = try KivyLikeClient()
+        let program = kivy.kivyProgram()
+        let colorTexture = kivy.texture(width: 16, height: 16, pixels: [UInt8](repeating: 0, count: 16 * 16 * 4))
+        var framebuffer: GLuint = 0
+        kivy.t.glGenFramebuffers!(1, &framebuffer)
+        kivy.t.glBindFramebuffer!(GL.framebuffer, framebuffer)
+        kivy.t.glFramebufferTexture2D!(GL.framebuffer, GL.colorAttachment0, GL.texture2D, colorTexture, 0)
+        kivy.t.glViewport!(0, 0, 16, 16)
+        kivy.clear(SIMD4(0, 1, 0, 1))
+
+        try kivy.gl.drawWithSkia(texture: colorTexture) { canvas in
+            canvas.drawRect(x: 0, y: 0, w: 16, h: 8, paint: SkPaint(color: SIMD4(1, 0, 0, 1)))
+        }
+
+        kivy.setupProjection(program, color: SIMD4(0, 0, 1, 1), width: 16, height: 16)
+        let white1x1 = kivy.texture(width: 1, height: 1, pixels: [255, 255, 255, 255])
+        kivy.rectangle(program, x: 0, y: 12, width: 16, height: 4)
+
+        kivy.t.glBindFramebuffer!(GL.framebuffer, 0)
+        kivy.t.glViewport!(0, 0, 64, 64)
+        kivy.clear(SIMD4(0, 0, 0, 1))
+        kivy.setupProjection(program)
+        kivy.t.glBindTexture!(GL.texture2D, colorTexture)
+        kivy.rectangle(program, x: 0, y: 0, width: 64, height: 64)
+        let pixels = kivy.read()
+        #expect(kivy.error == GL.noError)
+        #expect(kivy.pixel(pixels, x: 32, y: 10) == red)
+        #expect(kivy.pixel(pixels, x: 32, y: 40) == green)
+        #expect(kivy.pixel(pixels, x: 32, y: 60) == blue)
+        var names = [white1x1]
+        kivy.t.glDeleteTextures!(1, &names)
+    }
+
+    /// A deleted texture takes its Skia surface with it; a new one gets its
+    /// own. Names with no image, and mipmapped textures, are refused.
+    @Test func skiaSurfacesFollowTheirTextures() throws {
+        let kivy = try KivyLikeClient()
+        let program = kivy.kivyProgram()
+        kivy.setupProjection(program)
+
+        #expect(throws: KivySkiaError.self) {
+            try kivy.gl.drawWithSkia(texture: 999) { _ in }
+        }
+        let mipmapped = kivy.texture(width: 8, height: 8, pixels: [UInt8](repeating: 255, count: 8 * 8 * 4))
+        kivy.t.glGenerateMipmap!(GL.texture2D)
+        #expect(throws: KivySkiaError.self) {
+            try kivy.gl.drawWithSkia(texture: mipmapped) { _ in }
+        }
+
+        var first = kivy.texture(width: 32, height: 32, pixels: [UInt8](repeating: 0, count: 32 * 32 * 4))
+        try kivy.gl.drawWithSkia(texture: first) { $0.clear(SIMD4<Float>(1, 0, 0, 1)) }
+        kivy.t.glDeleteTextures!(1, &first)
+        let second = kivy.texture(width: 32, height: 32, pixels: [UInt8](repeating: 0, count: 32 * 32 * 4))
+        try kivy.gl.drawWithSkia(texture: second) { $0.clear(SIMD4<Float>(0, 1, 0, 1)) }
+        kivy.rectangle(program, x: 0, y: 0, width: 64, height: 64)
+        let pixels = kivy.read()
+        #expect(kivy.error == GL.noError)
+        #expect(kivy.pixel(pixels, x: 32, y: 32) == green)
+    }
+
+    // MARK: - Text and images for Kivy's providers
+
+    static let roboto = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("kivy2x/kivy/data/fonts/Roboto-Regular.ttf").path
+
+    /// 2x2 RGBA: red, green / blue, white at half alpha.
+    static let png: [UInt8] = [
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d,
+        0x24, 0x00, 0x00, 0x00, 0x19, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x05, 0xc1, 0x01, 0x0d, 0x00,
+        0x00, 0x08, 0xc0, 0x20, 0xdc, 0x2c, 0x6e, 0xf2, 0x0b, 0x22, 0x69, 0x47, 0xe2, 0x1e, 0x3f, 0x80,
+        0x06, 0x81, 0xa3, 0x55, 0xfe, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42,
+        0x60, 0x82,
+    ]
+
+    func withFont<R>(size: Float, underline: Bool = false, outline: Float = 0, _ body: (KivyNUIFont) throws -> R) rethrows -> R {
+        try Self.roboto.withCString { path in
+            try body(KivyNUIFont(
+                path: path, size: size, hinting: 2, antialias: true,
+                underline: underline, strikethrough: false, outline_width: outline
+            ))
+        }
+    }
+
+    @Test func providersMeasureTextWithTheFontFile() throws {
+        let providers = KivyProviders()
+        let metrics = try #require(withFont(size: 32) { providers.metrics($0) })
+        #expect(metrics.ascent > 20 && metrics.ascent < 40 && metrics.descent > 4 && metrics.descent < 16)
+        let short = try #require(withFont(size: 32) { providers.extents($0, "Hi") })
+        let long = try #require(withFont(size: 32) { providers.extents($0, "Hi there") })
+        #expect(short.height == metrics.ascent + metrics.descent)
+        #expect(long.width > short.width && long.height == short.height)
+        let outlined = try #require(withFont(size: 32, outline: 3) { providers.extents($0, "Hi") })
+        #expect(outlined.width == short.width + 6 && outlined.height == short.height + 6)
+        let missing = "/nonexistent.ttf".withCString { path in
+            providers.extents(KivyNUIFont(path: path, size: 32, hinting: 2, antialias: true,
+                                          underline: false, strikethrough: false, outline_width: 0), "Hi")
+        }
+        #expect(missing == nil)
+    }
+
+    /// A label's texture before Kivy has given it storage (a power-of-two
+    /// size made with a fill callback): the host makes it, clears it and
+    /// draws the runs. An underlined run of spaces is a bar of the text's
+    /// color under where the glyphs would be.
+    @Test func providersDrawTextRunsIntoATexture() throws {
+        let kivy = try KivyLikeClient()
+        kivy.clear(SIMD4(0, 0, 0, 1))
+        let program = kivy.kivyProgram()
+        kivy.setupProjection(program)
+        var name: GLuint = 0
+        kivy.t.glGenTextures!(1, &name)
+        kivy.t.glBindTexture!(GL.texture2D, name)
+        let providers = KivyProviders()
+        try withFont(size: 24, underline: true) { font in
+            try "        ".withCString { spaces in
+                var run = KivyNUITextRun()
+                run.utf8 = spaces
+                run.x = 4
+                run.y = 4
+                run.color = (1, 0, 0, 1)
+                run.outline_color = (0, 0, 0, 1)
+                run.font = font
+                try withUnsafePointer(to: &run) { pointer in
+                    try providers.drawText(UnsafeBufferPointer(start: pointer, count: 1),
+                                           texture: name, width: 64, height: 64, gl: kivy.gl)
+                }
+            }
+        }
+        #expect(kivy.gl.textures[name]?.image?.width == 64)
+        kivy.rectangle(program, x: 0, y: 0, width: 64, height: 64)
+        let pixels = kivy.read()
+        #expect(kivy.error == GL.noError)
+        // The bar is a few rows somewhere below the baseline (about y 32 down
+        // from the top: texture rows, which Kivy's unflipped rectangle shows
+        // from the bottom).
+        let rows = (0..<64).filter { y in kivy.pixel(pixels, x: 20, y: y) == red }
+        #expect(!rows.isEmpty && rows.count <= 3, "\(rows)")
+        #expect(rows.allSatisfy { $0 > 26 && $0 < 40 }, "\(rows)")
+        // Cleared: transparent (no blending here, so read back as it is).
+        #expect(kivy.pixel(pixels, x: 20, y: 60) == .zero)
+    }
+
+    @Test func providersDecodeAndDrawImages() throws {
+        let kivy = try KivyLikeClient()
+        kivy.clear(SIMD4(0, 0, 0, 1))
+        let program = kivy.kivyProgram()
+        kivy.setupProjection(program)
+        let providers = KivyProviders()
+        try Self.png.withUnsafeBytes { data in
+            let size = try #require(providers.imageSize(data))
+            #expect(size.width == 2 && size.height == 2)
+            var pixels = [UInt8](repeating: 0, count: 16)
+            #expect(pixels.withUnsafeMutableBytes { providers.imagePixels(data, into: $0) })
+            #expect(pixels == [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 128])
+            // The wrong buffer size is refused.
+            var small = [UInt8](repeating: 0, count: 8)
+            #expect(!small.withUnsafeMutableBytes { providers.imagePixels(data, into: $0) })
+
+            var name: GLuint = 0
+            kivy.t.glGenTextures!(1, &name)
+            kivy.t.glBindTexture!(GL.texture2D, name)
+            kivy.t.glTexParameteri!(GL.texture2D, GL.textureMinFilter, GLint(GL.nearest))
+            kivy.t.glTexParameteri!(GL.texture2D, GL.textureMagFilter, GLint(GL.nearest))
+            #expect(try providers.drawImage(data, texture: name, width: 2, height: 2, gl: kivy.gl))
+        }
+        kivy.rectangle(program, x: 0, y: 0, width: 64, height: 64)
+        let pixels = kivy.read()
+        #expect(kivy.error == GL.noError)
+        // The image's first row is the texture's row 0: the bottom here.
+        #expect(kivy.pixel(pixels, x: 10, y: 10) == red)
+        #expect(kivy.pixel(pixels, x: 50, y: 10) == green)
+        #expect(kivy.pixel(pixels, x: 10, y: 50) == blue)
+        // Not an image.
+        let junk: [UInt8] = [1, 2, 3, 4]
+        #expect(junk.withUnsafeBytes { providers.imageSize($0) } == nil)
+    }
+
+    /// A mipmapped texture (Kivy's `mipmap=True`) is filled through one level
+    /// and keeps its mipmaps.
+    @Test func fillWithSkiaKeepsAMipmappedTexturesMipmaps() throws {
+        let kivy = try KivyLikeClient()
+        let program = kivy.kivyProgram()
+        kivy.setupProjection(program)
+        let name = kivy.texture(width: 16, height: 16, pixels: [UInt8](repeating: 255, count: 16 * 16 * 4))
+        kivy.t.glGenerateMipmap!(GL.texture2D)
+        let levels = try #require(kivy.gl.textures[name]?.image?.levels)
+        #expect(levels == 5)
+        try kivy.gl.fillWithSkia(texture: name, width: 16, height: 16) { $0.clear(SIMD4<Float>(0, 0, 1, 1)) }
+        #expect(kivy.gl.textures[name]?.image?.levels == levels)
+        kivy.t.glTexParameteri!(GL.texture2D, GL.textureMinFilter, GLint(GL.nearestMipmapNearest))
+        kivy.rectangle(program, x: 0, y: 0, width: 4, height: 4)
+        kivy.rectangle(program, x: 8, y: 8, width: 56, height: 56)
+        let pixels = kivy.read()
+        #expect(kivy.error == GL.noError)
+        #expect(kivy.pixel(pixels, x: 2, y: 2) == blue)
+        #expect(kivy.pixel(pixels, x: 30, y: 30) == blue)
+    }
+
+    /// An SVG with only a viewBox: sized by it, drawn into the texture, and
+    /// decoded to straight-alpha bytes for `keep_data`.
+    @Test func providersDrawSVGDocuments() throws {
+        let kivy = try KivyLikeClient()
+        kivy.clear(SIMD4(0, 0, 0, 1))
+        let program = kivy.kivyProgram()
+        kivy.setupProjection(program)
+        let providers = KivyProviders()
+        let svg = Array("""
+            <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 4'>
+              <rect width='8' height='2' fill='#ff0000'/>
+              <rect y='2' width='8' height='2' fill='#0000ff'/>
+            </svg>
+            """.utf8)
+        try svg.withUnsafeBytes { data in
+            let size = try #require(providers.imageSize(data))
+            #expect(size.width == 8 && size.height == 4)
+            var pixels = [UInt8](repeating: 0, count: 8 * 4 * 4)
+            #expect(pixels.withUnsafeMutableBytes { providers.imagePixels(data, into: $0) })
+            #expect(Array(pixels[0..<4]) == [255, 0, 0, 255])
+            #expect(Array(pixels[(3 * 8) * 4..<(3 * 8) * 4 + 4]) == [0, 0, 255, 255])
+
+            var name: GLuint = 0
+            kivy.t.glGenTextures!(1, &name)
+            kivy.t.glBindTexture!(GL.texture2D, name)
+            kivy.t.glTexParameteri!(GL.texture2D, GL.textureMinFilter, GLint(GL.nearest))
+            kivy.t.glTexParameteri!(GL.texture2D, GL.textureMagFilter, GLint(GL.nearest))
+            #expect(try providers.drawImage(data, texture: name, width: 8, height: 4, gl: kivy.gl))
+        }
+        kivy.rectangle(program, x: 0, y: 0, width: 64, height: 64)
+        let pixels = kivy.read()
+        #expect(kivy.error == GL.noError)
+        // The document's top is the texture's row 0: the bottom here.
+        #expect(kivy.pixel(pixels, x: 32, y: 10) == red)
+        #expect(kivy.pixel(pixels, x: 32, y: 54) == blue)
     }
 }

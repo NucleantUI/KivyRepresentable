@@ -53,7 +53,7 @@ extension KivyGL {
         shader.parsed = nil
         do {
             let parsed = try GLSLShaderSource(shader.source)
-            let glsl = GLSLTranslator.translate(parsed, stage: shader.stage, interface: GLSLInterface(single: parsed))
+            let glsl = GLSLTranslator(interface: GLSLInterface(single: parsed)).translate(parsed, stage: shader.stage)
             if compileSPIRV(glsl, stage: shader.stage) != nil {
                 shader.parsed = parsed
                 shader.compiled = true
@@ -182,11 +182,12 @@ extension KivyGL {
         }
 
         let interface = GLSLInterface(stages: [vertex, fragment], attributes: locations)
-        guard let vertexSPIRV = compileSPIRV(GLSLTranslator.translate(vertex, stage: .vertex, interface: interface), stage: .vertex) else {
+        let translator = GLSLTranslator(interface: interface)
+        guard let vertexSPIRV = compileSPIRV(translator.translate(vertex, stage: .vertex), stage: .vertex) else {
             program.infoLog = VKShaderCompiler.shared.lastErrorMessage ?? "vertex shader failed to link"
             return
         }
-        guard let fragmentSPIRV = compileSPIRV(GLSLTranslator.translate(fragment, stage: .fragment, interface: interface), stage: .fragment) else {
+        guard let fragmentSPIRV = compileSPIRV(translator.translate(fragment, stage: .fragment), stage: .fragment) else {
             program.infoLog = VKShaderCompiler.shared.lastErrorMessage ?? "fragment shader failed to link"
             return
         }

@@ -16,6 +16,7 @@
 
 import Foundation
 @preconcurrency import CVulkan
+import NucleantSkia
 
 public final class KivyGL: @unchecked Sendable {
 
@@ -92,6 +93,10 @@ public final class KivyGL: @unchecked Sendable {
     var samplers: [String: VkSampler] = [:]
     var blankImage: GLImage?
     var pipelines: [GLPipelineKey: VkPipeline] = [:]
+
+    /// The Ganesh context Skia draws into textures with, made on first use
+    /// (KivyGL+Skia.swift). Released after every image's surface.
+    var skiaContext: SkiaVulkanContext?
 
     static let maxTextureUnits = 16
     static let maxVertexAttributes = 16

@@ -207,13 +207,14 @@ def kivy_usage():
 #: Global settings options for kivy
 kivy_options = {
     'window': ('nui', 'egl_rpi', 'sdl2', 'pygame', 'sdl', 'x11'),
-    'text': ('pil', 'sdl2', 'pygame', 'sdlttf'),
+    'text': ('nui', 'pil', 'sdl2', 'pygame', 'sdlttf'),
     'video': (
         'gstplayer', 'ffmpeg', 'ffpyplayer', 'null'),
     'audio': (
         'gstplayer', 'pygame', 'ffpyplayer', 'sdl2',
         'avplayer'),
-    'image': ('tex', 'imageio', 'dds', 'sdl2', 'pygame', 'pil', 'ffpy', 'gif'),
+    'image': ('nui', 'tex', 'imageio', 'dds', 'sdl2', 'pygame', 'pil', 'ffpy',
+              'gif'),
     'camera': ('opencv', 'gi', 'avfoundation',
                'android', 'picamera'),
     'spelling': ('enchant', 'osxappkit', ),

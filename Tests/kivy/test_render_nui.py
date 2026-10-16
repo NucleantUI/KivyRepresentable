@@ -1009,6 +1009,179 @@ print('OK')
 """
 
 
+SKIA_TEXTURE_TEST = r"""
+from kivy.app import App
+from kivy.uix.widget import Widget
+from kivy.graphics import Color, Rectangle
+from kivy.graphics.texture import Texture
+
+headless.kivy_nui_headless_skia_pattern.argtypes = [ctypes.c_uint32, ctypes.c_int32, ctypes.c_int32]
+headless.kivy_nui_headless_skia_pattern.restype = ctypes.c_bool
+
+class SkiaTexture(App):
+    def build(self):
+        root = Widget()
+        # A texture of Kivy's own, flipped as Kivy flips its images: Skia
+        # draws its first row at the top, as image data comes.
+        self.texture = Texture.create(size=(128, 96), colorfmt='rgba')
+        self.texture.flip_vertical()
+        with root.canvas:
+            Color(1, 1, 1, 1)
+            Rectangle(texture=self.texture, pos=(20, 20), size=(128, 96))
+            # The same texture again, tinted and half the size: Kivy's
+            # drawing of it doesn't change.
+            Color(0, 1, 0, 1)
+            Rectangle(texture=self.texture, pos=(180, 40), size=(64, 48))
+        return root
+
+app = SkiaTexture()
+app.run()
+tick(2)
+assert headless.kivy_nui_headless_skia_pattern(app.texture.id, 128, 96)
+# The texture's pixels changed under Kivy: its canvas redraws when asked.
+app.root.canvas.ask_update()
+tick(2)
+data = frame()
+save(data, 'nui_skia_texture')
+
+def near_color(x, y, color):
+    return near(pixel(data, x, y), color, 8)
+
+# Red band over the top quarter, blue circle at the texture's (64, 60) from
+# the top, white elsewhere; the text is dark somewhere in its corner.
+assert near_color(84, 110, (255, 0, 0, 255)), pixel(data, 84, 110)
+assert near_color(84, 56, (0, 0, 255, 255)), pixel(data, 84, 56)
+assert near_color(140, 46, (255, 255, 255, 255)), pixel(data, 140, 46)
+assert near_color(30, 80, (255, 255, 255, 255)), pixel(data, 30, 80)
+text = [pixel(data, x, y)[0] for x in range(22, 60) for y in range(22, 38)]
+assert min(text) < 100 and max(text) > 200, (min(text), max(text))
+# The tinted copy: red band green-tinted is black, white is green.
+assert near_color(212, 84, (0, 0, 0, 255)), pixel(data, 212, 84)
+assert near_color(236, 50, (0, 255, 0, 255)), pixel(data, 236, 50)
+
+# Drawn again: Skia draws over the same texture, Kivy shows the new pixels.
+assert headless.kivy_nui_headless_skia_pattern(app.texture.id, 128, 96)
+app.root.canvas.ask_update()
+tick(1)
+data = frame()
+assert near_color(84, 110, (255, 0, 0, 255))
+print('OK')
+"""
+
+
+PROVIDERS_TEST = r"""
+import io
+from PIL import Image as PILImage
+from kivy.app import App
+from kivy.core.image import Image as CoreImage, ImageLoader
+from kivy.core.text import Label as CoreLabel
+from kivy.graphics import Color, Rectangle
+from kivy.uix.button import Button
+from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.image import Image
+from kivy.uix.label import Label
+
+# Kivy picked the host's providers.
+assert CoreLabel.__name__ == 'LabelNUI', CoreLabel
+assert ImageLoader.loaders[0].__name__ == 'ImageLoaderNUI', ImageLoader.loaders
+
+# A 40x40 PNG: red over green, as an image file's rows go (first at the top).
+picture = PILImage.new('RGBA', (40, 40), (0, 255, 0, 255))
+picture.paste((255, 0, 0, 255), (0, 0, 40, 20))
+png_path = os.path.join(SHOTS, 'nui_providers_source.png')
+picture.save(png_path)
+png_bytes = io.BytesIO()
+picture.save(png_bytes, 'png')
+# An SVG sized by its viewBox: red over blue.
+svg_path = os.path.join(SHOTS, 'nui_providers_source.svg')
+with open(svg_path, 'w') as f:
+    f.write("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'>"
+            "<rect width='20' height='10' fill='#ff0000'/>"
+            "<rect y='10' width='20' height='10' fill='#0000ff'/>"
+            "<circle cx='10' cy='10' r='3' fill='#ffffff'/></svg>")
+
+class Providers(App):
+    def build(self):
+        root = FloatLayout()
+        def add(widget, pos, size):
+            widget.size_hint = (None, None)
+            widget.pos, widget.size = pos, size
+            root.add_widget(widget)
+            return widget
+        self.plain = add(Label(text='Skia text', font_size=40), (10, 180), (300, 56))
+        add(Label(text='[b]Bold[/b] [color=ff0000]red[/color] [u]under[/u]',
+                  markup=True, font_size=24), (10, 130), (300, 40))
+        add(Label(text='Out', font_size=30, color=(1, 1, 0, 1),
+                  outline_width=3, outline_color=(0, 0, 1, 1)), (220, 10), (100, 60))
+        add(Image(source=png_path, fit_mode='fill'), (10, 10), (40, 40))
+        add(Image(source=svg_path, fit_mode='fill'), (10, 70), (40, 40))
+        add(Button(text='Atlas'), (120, 10), (90, 50))
+        memory = CoreImage(io.BytesIO(png_bytes.getvalue()), ext='png')
+        with root.canvas:
+            Color(1, 1, 1, 1)
+            Rectangle(texture=memory.texture, pos=(60, 10), size=(40, 40))
+            # No texture: Kivy's default one, its default.png through the
+            # same loader.
+            Color(0, 0, 1, 1)
+            Rectangle(pos=(150, 80), size=(30, 30))
+        return root
+
+app = Providers()
+app.run()
+tick(6)
+data = frame()
+save(data, 'nui_providers')
+
+def region(x0, x1, y0, y1, step=1):
+    return [pixel(data, x, y) for x in range(x0, x1, step) for y in range(y0, y1, step)]
+
+# Plain text: measured to a sensible size, drawn white where the label is.
+w, h = app.plain.texture_size
+assert 120 <= w <= 230 and 40 <= h <= 64, (w, h)
+assert any(p[0] > 220 and p[1] > 220 and p[2] > 220 for p in region(10, 310, 180, 236, 2))
+# Markup: the red word in red.
+assert any(p[0] > 200 and p[1] < 60 and p[2] < 60 for p in region(10, 310, 130, 170)), 'no red word'
+# Outline: blue around yellow.
+out = region(220, 320, 10, 70)
+assert any(p[2] > 200 and p[0] < 60 for p in out), 'no blue outline'
+assert any(p[0] > 200 and p[1] > 200 and p[2] < 60 for p in out), 'no yellow text'
+# Images, from a file and from memory: upright, red over green.
+for x in (30, 80):
+    assert near(pixel(data, x, 42), (255, 0, 0, 255), 8), (x, pixel(data, x, 42))
+    assert near(pixel(data, x, 18), (0, 255, 0, 255), 8), (x, pixel(data, x, 18))
+# The SVG: upright, red over blue, a white dot in the middle.
+assert near(pixel(data, 20, 104), (255, 0, 0, 255), 8), pixel(data, 20, 104)
+assert near(pixel(data, 20, 76), (0, 0, 255, 255), 8), pixel(data, 20, 76)
+assert near(pixel(data, 30, 90), (255, 255, 255, 255), 8), pixel(data, 30, 90)
+# The Button's background is Kivy's theme atlas, a PNG through the same loader.
+assert any(near(p, (88, 88, 88, 255), 40) for p in region(122, 208, 12, 58, 3)), 'no button background'
+# keep_data: the host decodes into bytes Kivy keeps and reads back.
+kept = CoreImage(png_path, keep_data=True)
+assert kept.size == (40, 40)
+colors = {tuple(round(c) for c in kept.read_pixel(5, y)) for y in (5, 35)}
+assert colors == {(1, 0, 0, 1), (0, 1, 0, 1)}, colors
+kept = CoreImage(svg_path, keep_data=True)
+assert kept.size == (20, 20)
+colors = {tuple(round(c) for c in kept.read_pixel(1, y)) for y in (1, 18)}
+assert colors == {(1, 0, 0, 1), (0, 0, 1, 1)}, colors
+assert near(pixel(data, 165, 95), (0, 0, 255, 255), 8), pixel(data, 165, 95)
+# A graphics context reload recreates every texture empty; the host's
+# images are drawn into them again.
+from kivy.graphics.context import get_context
+get_context().reload()
+app.root.canvas.ask_update()   # a frame drawn after it
+tick(6)
+data = frame()
+save(data, 'nui_providers_reloaded')
+for x in (30, 80):
+    assert near(pixel(data, x, 42), (255, 0, 0, 255), 8), ('reloaded', x, pixel(data, x, 42))
+    assert near(pixel(data, x, 18), (0, 255, 0, 255), 8), ('reloaded', x, pixel(data, x, 18))
+assert near(pixel(data, 20, 104), (255, 0, 0, 255), 8), ('reloaded', pixel(data, 20, 104))
+assert near(pixel(data, 165, 95), (0, 0, 255, 255), 8), ('reloaded', pixel(data, 165, 95))
+print('OK')
+"""
+
+
 def run(name, body, env=None):
     prelude = 'import ctypes, os, sys\n' + \
         'ROOT, KIVY, LIB, HEADLESS, SHOTS = {!r}, {!r}, {!r}, {!r}, {!r}\n'.format(
@@ -1043,6 +1216,8 @@ if __name__ == '__main__':
         ('circles: shader ellipse, arcs, texture, stencil, fallbacks', CIRCLE_TEST, None),
         ('rings: shader circle and ellipse lines, caps, dashes, closing', RING_TEST, None),
         ('rings: flat ellipses, scaled', FLAT_RING_TEST, None),
+        ('skia: drawing into a kivy texture', SKIA_TEXTURE_TEST, None),
+        ('providers: skia text, images and svg into kivy textures', PROVIDERS_TEST, None),
         ('widgets: label and button text', WIDGETS_TEST, None),
         ('stencil view and fbo', STENCIL_FBO_TEST, None),
         ('showcase: every screen, shader transitions, clock', SHOWCASE_TEST, None),

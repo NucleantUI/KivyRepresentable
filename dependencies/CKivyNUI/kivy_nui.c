@@ -85,6 +85,37 @@ void kivy_nui_request_close(void) {
     if (g_host.request_close) g_host.request_close(g_host.context);
 }
 
+/* MARK: - Text and images (Kivy -> host) */
+
+bool kivy_nui_has_text_and_images(void) {
+    return g_has_host && g_host.text_extents && g_host.font_metrics && g_host.draw_text
+        && g_host.image_size && g_host.draw_image && g_host.image_pixels;
+}
+
+bool kivy_nui_text_extents(const KivyNUIFont *font, const char *utf8, int32_t *width, int32_t *height) {
+    return g_host.text_extents ? g_host.text_extents(g_host.context, font, utf8, width, height) : false;
+}
+
+bool kivy_nui_font_metrics(const KivyNUIFont *font, int32_t *ascent, int32_t *descent) {
+    return g_host.font_metrics ? g_host.font_metrics(g_host.context, font, ascent, descent) : false;
+}
+
+bool kivy_nui_draw_text(uint32_t texture, int32_t width, int32_t height, const KivyNUITextRun *runs, int32_t count) {
+    return g_host.draw_text ? g_host.draw_text(g_host.context, texture, width, height, runs, count) : false;
+}
+
+bool kivy_nui_image_size(const void *data, size_t size, int32_t *width, int32_t *height) {
+    return g_host.image_size ? g_host.image_size(g_host.context, data, size, width, height) : false;
+}
+
+bool kivy_nui_draw_image(uint32_t texture, int32_t width, int32_t height, const void *data, size_t size) {
+    return g_host.draw_image ? g_host.draw_image(g_host.context, texture, width, height, data, size) : false;
+}
+
+bool kivy_nui_image_pixels(const void *data, size_t size, uint8_t *out, size_t out_size) {
+    return g_host.image_pixels ? g_host.image_pixels(g_host.context, data, size, out, out_size) : false;
+}
+
 /* MARK: - Event queue (host pushes, Kivy polls) */
 
 /* A growable ring of events. DROP_* strings are copied on push; the one

@@ -334,11 +334,17 @@ struct GLSLInterface {
     }
 }
 
-enum GLSLTranslator {
+/// Turns GLSL ES 1.00 into Vulkan GLSL 450 with the locations and bindings
+/// one interface gives (one program's, or one stage's on its own).
+final class GLSLTranslator {
+    let interface: GLSLInterface
 
-    /// Vulkan GLSL 450 for `shader`, with the locations and bindings
-    /// `interface` gives.
-    static func translate(_ shader: GLSLShaderSource, stage: GLSLStage, interface: GLSLInterface) -> String {
+    init(interface: GLSLInterface) {
+        self.interface = interface
+    }
+
+    /// Vulkan GLSL 450 for `shader` as `stage`.
+    func translate(_ shader: GLSLShaderSource, stage: GLSLStage) -> String {
         var body = shader.text
         // Replace back to front, so earlier ranges stay valid.
         let firstUniform = shader.declarations.first(where: {
@@ -397,7 +403,7 @@ enum GLSLTranslator {
         return out
     }
 
-    static func uniformBlock(_ uniforms: [GLSLVariable]) -> String {
+    func uniformBlock(_ uniforms: [GLSLVariable]) -> String {
         let members = uniforms.map { "\($0.declaration);" }.joined(separator: " ")
         return "layout(std140, set = 0, binding = 0) uniform NUIUniforms { \(members) };"
     }

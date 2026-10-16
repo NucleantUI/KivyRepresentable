@@ -7,15 +7,15 @@
 //  has to register with. Each platform answers in its own file.
 //
 
-enum LoadedLibraries {
+final class LoadedLibraries {
     /// The file of the loaded library named `fileName` (e.g.
     /// "libCKivyNUI.dylib"), if one is loaded.
-    static func path(named fileName: String) -> String? {
+    func path(named fileName: String) -> String? {
         platformPath(named: fileName)
     }
 
     /// The file of the library that defines `symbol`.
-    static func path(definingSymbol symbol: String) -> String? {
+    func path(definingSymbol symbol: String) -> String? {
         platformPath(definingSymbol: symbol)
     }
 }

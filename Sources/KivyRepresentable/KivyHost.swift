@@ -23,6 +23,9 @@ public final class KivyHost: @unchecked Sendable {
     /// Kivy's GL context, while its window has one.
     public private(set) var gl: KivyGL?
 
+    /// Text and images for Kivy's `nui` providers, drawn into its textures.
+    public let providers = KivyProviders()
+
     /// Called with the new context, before Kivy draws into it — where a
     /// window points `presentTarget` at its node's image.
     public var onContextCreated: ((KivyGL) -> Void)?
@@ -82,6 +85,56 @@ public final class KivyHost: @unchecked Sendable {
         }
         host.request_close = { context in
             KivyHost.from(context).onRequestClose?()
+        }
+        host.text_extents = { context, font, utf8, width, height in
+            guard let font, let utf8,
+                  let size = KivyHost.from(context).providers.extents(font.pointee, String(cString: utf8))
+            else { return false }
+            width?.pointee = size.width
+            height?.pointee = size.height
+            return true
+        }
+        host.font_metrics = { context, font, ascent, descent in
+            guard let font, let metrics = KivyHost.from(context).providers.metrics(font.pointee) else { return false }
+            ascent?.pointee = metrics.ascent
+            descent?.pointee = metrics.descent
+            return true
+        }
+        host.draw_text = { context, texture, width, height, runs, count in
+            let host = KivyHost.from(context)
+            guard let gl = host.gl else { return false }
+            do {
+                try host.providers.drawText(
+                    UnsafeBufferPointer(start: runs, count: runs == nil ? 0 : Int(max(0, count))),
+                    texture: texture, width: Int(width), height: Int(height), gl: gl
+                )
+                return true
+            } catch {
+                return false
+            }
+        }
+        host.image_size = { context, data, size, width, height in
+            guard let data,
+                  let image = KivyHost.from(context).providers.imageSize(UnsafeRawBufferPointer(start: data, count: size))
+            else { return false }
+            width?.pointee = image.width
+            height?.pointee = image.height
+            return true
+        }
+        host.draw_image = { context, texture, width, height, data, size in
+            let host = KivyHost.from(context)
+            guard let gl = host.gl, let data else { return false }
+            return (try? host.providers.drawImage(
+                UnsafeRawBufferPointer(start: data, count: size),
+                texture: texture, width: Int(width), height: Int(height), gl: gl
+            )) ?? false
+        }
+        host.image_pixels = { context, data, size, out, outSize in
+            guard let data, let out else { return false }
+            return KivyHost.from(context).providers.imagePixels(
+                UnsafeRawBufferPointer(start: data, count: size),
+                into: UnsafeMutableRawBufferPointer(start: out, count: outSize)
+            )
         }
         library.setHost(&host)
     }

@@ -54,6 +54,13 @@ public final class KivyRenderNode: NucleantContainerNode, @unchecked Sendable {
     }
 
     public func update(engine: Engine, cmd: VkCommandBuffer) {
+        // A KivyAppView laid out in this window's pass is waiting for the
+        // window's engine. The node that hands it over stays due, so the
+        // next frame — whose `onUpdate` starts Kivy — is drawn too.
+        // The engine draws on the main thread, as the window's frame runs.
+        nonisolated(unsafe) let drawing = engine
+        let handedOver = MainActor.assumeIsolated { KivyAppSession.handOver(drawing) }
+        defer { if handedOver { needsRender = true } }
         guard needsRender else { return }
         switch context {
         case .thor(let node): node.update(engine, slot: self, cmd: cmd)

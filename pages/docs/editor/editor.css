@@ -1,0 +1,88 @@
+:root {
+  color-scheme: light dark;
+  --background: #f4f4f6;
+  --pane: #ffffff;
+  --header: #e8e8ec;
+  --text: #222228;
+  --muted: #6a6a74;
+  --border: #d4d4da;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #16161a;
+    --pane: #1e1e1e;
+    --header: #26262c;
+    --text: #dddde2;
+    --muted: #8c8c96;
+    --border: #33333a;
+  }
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--background);
+  color: var(--text);
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+/* kv over py on the left, the Kivy window on the right. */
+.playground {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  height: 100dvh;
+  padding: 6px;
+  box-sizing: border-box;
+}
+
+.editors {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  min-height: 0;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--pane);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.pane header {
+  padding: 4px 10px;
+  background: var(--header);
+  border-bottom: 1px solid var(--border);
+  font: 600 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#status {
+  float: right;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.editor, #app {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* The app's window fills the pane (Web/nucleant-app.js sizes a filling
+   window to its container). */
+#app {
+  display: flex;
+  overflow: hidden;
+}
+
+@media (max-width: 720px) {
+  .playground {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
