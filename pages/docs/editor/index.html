@@ -9,13 +9,27 @@
 <body>
   <main class="playground">
     <section class="editors">
-      <div class="pane">
-        <header>app.kv</header>
-        <div class="editor" id="kv"></div>
-      </div>
-      <div class="pane">
-        <header>app.py</header>
-        <div class="editor" id="py"></div>
+      <button class="rail" id="rail" type="button" aria-controls="panes" aria-expanded="true" title="Hide the code">
+        <span class="chevron" aria-hidden="true">‹</span>
+        <span class="rail-label">app.kv · app.py</span>
+      </button>
+      <div class="panes" id="panes">
+        <div class="pane" data-pane="kv">
+          <header>
+            <button class="pane-toggle" type="button" aria-controls="kv" aria-expanded="true">
+              <span class="chevron" aria-hidden="true">▾</span> app.kv
+            </button>
+          </header>
+          <div class="editor" id="kv"></div>
+        </div>
+        <div class="pane" data-pane="py">
+          <header>
+            <button class="pane-toggle" type="button" aria-controls="py" aria-expanded="true">
+              <span class="chevron" aria-hidden="true">▾</span> app.py
+            </button>
+          </header>
+          <div class="editor" id="py"></div>
+        </div>
       </div>
     </section>
     <section class="pane preview">
@@ -24,6 +38,7 @@
     </section>
   </main>
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+  <script type="module" src="layout.js"></script>
   <script type="module" src="editor.js"></script>
 </body>
 </html>
