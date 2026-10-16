@@ -7,12 +7,15 @@ dependencies = [
     # Built with the nui backends (kivy2x, USE_NUI=1): the playground's
     # wheelhouse (../../playground/wheelhouse).
     "kivy==2.3.1",
+    "carbonkivy",
     "pillow; sys_platform != 'emscripten'",
-    
 ]
 
 [tool.uv.build-backend]
 module-name = "kivy_playground"
+
+[tool.uv.sources]
+carbonkivy = { git = "https://github.com/CarbonKivy/CarbonKivy" }
 
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]
