@@ -76,8 +76,14 @@ struct KivyView {
 final class KivySession {
     let module: String
     weak var window: HostingWindow<KivyRenderNode>?
-    var displayScale: Double = 1
+    var displayScale: Double = 1 {
+        didSet {
+            guard displayScale != oldValue, host != nil else { return }
+            try? launcher?.setDensity(displayScale)
+        }
+    }
 
+    private var launcher: KivyLauncher?
     private var host: KivyHost?
     private var keyboard: KivyKeyboard?
     private var node: KivyShaderNode<KivyRenderNode>?
@@ -135,9 +141,11 @@ final class KivySession {
             self.container = container
             self.host = host
             self.keyboard = keyboard
+            self.launcher = launcher
             engine.onUpdate = { [weak self] dt in
                 MainActor.assumeIsolated { self?.frame(dt) }
             }
+            try launcher.setDensity(self.displayScale)
             try launcher.runModule(module)
         } catch {
             print("KivyWindowGroup: \(error)")

@@ -123,6 +123,27 @@ public final class KivyLauncher {
         )
     }
 
+    /// Kivy's `dp` and `sp` at `scale` pixels per point, the view's display
+    /// scale. Kivy finds the density itself only on macOS and Windows (from
+    /// the window's dpi) and on iOS and Android (from their own modules);
+    /// anywhere else, the browser among them, it is 1.
+    ///
+    /// Before Kivy's metrics are loaded, as `KIVY_METRICS_DENSITY`, which
+    /// they read when imported: setting `Metrics.density` would have Kivy
+    /// make its window there and then, ahead of the app. Once they are
+    /// loaded (the scale changed while running), on `Metrics` itself.
+    public func setDensity(_ scale: Double) throws {
+        try run(
+            """
+            import os, sys
+            os.environ['KIVY_METRICS_DENSITY'] = '\(scale)'
+            if 'kivy.metrics' in sys.modules:
+                sys.modules['kivy.metrics'].Metrics.density = \(scale)
+            """,
+            what: "Kivy's density \(scale)"
+        )
+    }
+
     /// Runs `code` holding the GIL: before `onLaunch` this thread has it;
     /// after, it is taken for the call.
     private func run(_ code: String, what: String) throws {

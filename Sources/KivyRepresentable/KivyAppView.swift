@@ -131,7 +131,12 @@ final class KivyAppSession {
     }
 
     let module: String
-    var displayScale: Double = 1
+    var displayScale: Double = 1 {
+        didSet {
+            guard displayScale != oldValue, host != nil else { return }
+            try? launcher?.setDensity(displayScale)
+        }
+    }
 
     /// The view's frame in its window, in points, as last laid out.
     private(set) var bounds: Rect = .zero
@@ -264,6 +269,7 @@ final class KivyAppSession {
             self.container = container
             self.host = host
             self.keyboard = keyboard
+            try launcher.setDensity(displayScale)
             try launcher.runModule(module)
         } catch {
             print("KivyAppView: \(error)")
