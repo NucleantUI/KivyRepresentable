@@ -245,9 +245,20 @@ class WindowNUI(WindowBase):
 
         Logger.info('Window: auto add nui input provider')
         NUIMotionEventProvider.win = self
-        EventLoop.add_input_provider(NUIMotionEventProvider('nui', ''))
+        self._nui_provider = NUIMotionEventProvider('nui', '')
+        EventLoop.add_input_provider(self._nui_provider)
+        # EventLoop.stop() removes every provider, this one too; a host that
+        # stops the app and starts it again keeps this window, so the
+        # provider goes back in as the loop starts again.
+        EventLoop.fbind('on_start', self._add_nui_provider)
 
         self._win.set_tick(self._tick)
+
+    def _add_nui_provider(self, *largs):
+        # Fingers of the run that stopped are gone with it.
+        NUIMotionEventProvider.q.clear()
+        NUIMotionEventProvider.touchmap.clear()
+        EventLoop.add_input_provider(self._nui_provider)
 
     def _update_density_and_dpi(self):
         _, _, pixel_width, _, density, dpi = self._win.window_metrics()
