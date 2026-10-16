@@ -34,8 +34,9 @@ fi
 
 uv pip install --python 3.13 --python-platform wasm32-pyodide2025 --find-links "$WHEELS" \
     --refresh-package kivy --refresh-package kivy-playground --target "$SITE_PACKAGES" ./python
-# The page downloads every file in it: not Kivy's examples, tests and tools.
-rm -rf "$SITE_PACKAGES/share" "$SITE_PACKAGES/kivy/tests" "$SITE_PACKAGES/kivy/tools"
+# The page downloads every file in it: not Kivy's examples, tests and tools,
+# nor uv's .lock (a hidden file, which GitHub Pages doesn't publish).
+rm -rf "$SITE_PACKAGES/share" "$SITE_PACKAGES/kivy/tests" "$SITE_PACKAGES/kivy/tools" "$SITE_PACKAGES/.lock"
 python3 "$NUCLEANT_APPLICATION/scripts/build_wasm_app.py" WebPlayground --package-path swift \
     --release --output app
 # Optimised by binaryen, without the names section the release build keeps
