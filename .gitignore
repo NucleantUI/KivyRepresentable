@@ -29,3 +29,6 @@ pages/swift/Sources/WebPlayground/site_packages/
 pages/swift/.build/
 pages/app/
 pages/site/
+
+# Resolved fresh by each build (the dependencies follow branches).
+Package.resolved
