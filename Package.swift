@@ -71,10 +71,9 @@ let package = Package(
         .library(name: "KivyNUIHeadless", type: .dynamic, targets: ["KivyNUIHeadless"]),
     ],
     dependencies: nucleantDependencies() + [
-        // Python, embedded: how Kivy is started inside the Swift app. CPython
-        // by the URL PySwiftKit uses, so the two are one package.
+        // Python, embedded: how Kivy is started inside the Swift app.
+        // PySwiftKit re-exports CPython's C api.
         .package(url: "https://github.com/Py-Swift/PySwiftKit.git", branch: "master"),
-        .package(url: "https://github.com/py-swift/CPython", branch: "master"),
     ],
     targets: [
         .target(
@@ -99,7 +98,6 @@ let package = Package(
                 .product(name: "NucleantUI", package: "NucleantUI"),
                 .product(name: "NucleantSkia", package: "NucleantSkia"),
                 .product(name: "PySwiftKitStatic", package: "PySwiftKit"),
-                .product(name: "CPython", package: "CPython"),
             ],
             // The page's side of the keyboard, which the browser's page
             // loads as a host.
