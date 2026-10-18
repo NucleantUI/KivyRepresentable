@@ -5,7 +5,7 @@ import PackageDescription
 
 /// Build against the sibling checkouts (`../NucleantVulkan`, `../NucleantUI`,
 /// `../NucleantSkia`)
-/// or against each repo on GitHub, decided the same way as in NucleantSkia:
+/// or against each repo's releases on GitHub (`nucleantDependencies()`), decided the same way as in NucleantSkia:
 /// `NUCLEANT_LOCAL_DEV=1|0` in the environment wins; otherwise local when the
 /// sibling checkouts exist next to this package.
 let devMode: Bool = {
@@ -15,6 +15,20 @@ let devMode: Bool = {
     let siblings = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     return FileManager.default.fileExists(atPath: siblings.appendingPathComponent("NucleantVulkan").path)
 }()
+
+/// The Nucleant packages this one is built on, from wherever `devMode` says.
+func nucleantDependencies() -> [Package.Dependency] {
+    if devMode {
+        return ["NucleantVulkan", "NucleantUI", "NucleantSkia"].map { .package(path: "../\($0)") }
+    }
+    // Each by version, up to its next minor: its new 0.0.x releases are
+    // picked up as they come; its 0.1.0 only once its line here is moved to it.
+    return [
+        .package(url: "https://github.com/NucleantUI/NucleantVulkan.git", .upToNextMinor(from: "0.0.1")),
+        .package(url: "https://github.com/NucleantUI/NucleantUI.git", .upToNextMinor(from: "0.0.1")),
+        .package(url: "https://github.com/NucleantUI/NucleantSkia.git", .upToNextMinor(from: "0.0.1")),
+    ]
+}
 
 /// CPython links Python.framework (python.org's, in /Library/Frameworks),
 /// which the linker no longer searches on its own. Only on what links here —
@@ -56,11 +70,7 @@ let package = Package(
         // Kivy renders through KivyRepresentable's GL, frames are read back.
         .library(name: "KivyNUIHeadless", type: .dynamic, targets: ["KivyNUIHeadless"]),
     ],
-    dependencies: [("NucleantVulkan", "master"), ("NucleantUI", "master"), ("NucleantSkia", "master")].map { name, branch in
-        devMode
-            ? .package(path: "../\(name)")
-            : .package(url: "https://github.com/NucleantUI/\(name).git", branch: branch)
-    } + [
+    dependencies: nucleantDependencies() + [
         // Python, embedded: how Kivy is started inside the Swift app. CPython
         // by the URL PySwiftKit uses, so the two are one package.
         .package(url: "https://github.com/Py-Swift/PySwiftKit.git", branch: "master"),
