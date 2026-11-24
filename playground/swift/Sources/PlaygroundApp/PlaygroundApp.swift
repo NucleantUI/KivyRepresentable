@@ -13,5 +13,6 @@ struct PlaygroundApp: KivyApp {
 
     var body: some Scene {
         KivyWindowGroup("Kivy Playground", module: CommandLine.arguments.dropFirst().first ?? "playground")
+        
     }
 }
